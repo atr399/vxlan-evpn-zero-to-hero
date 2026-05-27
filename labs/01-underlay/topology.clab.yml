@@ -1,0 +1,46 @@
+# Session 1: Underlay with OSPF
+#
+# Topology shape that's reused across every session:
+#   - 2 spines (Cisco Nexus 9000v)
+#   - 2 leaves (Cisco Nexus 9000v)
+#   - 2 hosts (Alpine Linux), one per leaf
+#
+# In this session, hosts are present in the topology but unconfigured.
+# They become active in Session 3 when we build the first L2VNI.
+#
+# Interface mapping (cisco_n9kv kind):
+#   ethN in this file == Ethernet1/N inside NX-OS
+
+name: vxlan-evpn
+
+topology:
+  kinds:
+    cisco_n9kv:
+      image: vrnetlab/cisco_n9kv:9300-10.5.5
+      startup-config: configs/__clabNodeName__.cfg
+    linux:
+      image: alpine:latest
+
+  nodes:
+    spine1:
+      kind: cisco_n9kv
+    spine2:
+      kind: cisco_n9kv
+    leaf1:
+      kind: cisco_n9kv
+    leaf2:
+      kind: cisco_n9kv
+    host1:
+      kind: linux
+    host2:
+      kind: linux
+
+  links:
+    # Spine-leaf full mesh (4 links)
+    - endpoints: ["spine1:eth1", "leaf1:eth1"]   # link-id 1
+    - endpoints: ["spine1:eth2", "leaf2:eth1"]   # link-id 2
+    - endpoints: ["spine2:eth1", "leaf1:eth2"]   # link-id 3
+    - endpoints: ["spine2:eth2", "leaf2:eth2"]   # link-id 4
+    # Host attachment
+    - endpoints: ["leaf1:eth3", "host1:eth1"]
+    - endpoints: ["leaf2:eth3", "host2:eth1"]

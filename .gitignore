@@ -1,0 +1,23 @@
+# Containerlab runtime artifacts
+# clab creates these directories on deploy; they contain node-specific
+# runtime state and should not be committed.
+clab-*/
+*.bak
+
+# Cisco / vrnetlab images
+# These are licensed; users supply their own. Never commit qcow2 to git.
+*.qcow2
+*.tgz
+*.tar.xz
+
+# Editor / OS junk
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# Python virtual environments (for future Jinja templating session)
+.venv/
+__pycache__/
+*.pyc
