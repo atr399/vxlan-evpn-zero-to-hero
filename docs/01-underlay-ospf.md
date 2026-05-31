@@ -13,6 +13,35 @@ exercises.
 
 ---
 
+## Mental model
+
+Before any config, picture what we're building.
+
+Imagine the fabric as a **highway system**. The leaves are towns where
+people live (the hosts). The spines are highway interchanges. Every town
+has on-ramps to every interchange, so you can drive from any town to any
+other town through at least two different interchanges.
+
+In this session we're just **paving the roads**. We don't care yet who
+drives on them or where they're going. We just need every town to know
+how to reach every other town's address, with backup paths in case one
+interchange closes for repairs.
+
+The cars (VXLAN packets) come later. The cargo (tenant traffic) comes
+after that. But none of it matters until the roads are paved and
+everyone knows the map.
+
+OSPF is how we make every device share its piece of the map. By the end
+of this session, every device will know how to reach every other
+device's loopback IP, with two paths to choose from for redundancy.
+
+> **Key insight**: The underlay is deliberately boring. The whole point
+> is that it just works in the background while VXLAN does the
+> interesting things on top. If the underlay ever becomes
+> "interesting," something has gone wrong.
+
+---
+
 ## Why we need an underlay at all
 
 VXLAN is a tunnel protocol. To send a frame from host1 (behind leaf1) to

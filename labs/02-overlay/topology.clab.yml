@@ -1,0 +1,34 @@
+# Session 2: Underlay (OSPF) + Overlay (BGP EVPN) control plane
+# Same physical topology as Session 1, configs build on top.
+
+name: vxlan-evpn
+
+topology:
+  kinds:
+    cisco_n9kv:
+      image: vrnetlab/cisco_n9kv:9300-10.5.5
+      startup-config: configs/__clabNodeName__.cfg
+    linux:
+      image: alpine:latest
+
+  nodes:
+    spine1:
+      kind: cisco_n9kv
+    spine2:
+      kind: cisco_n9kv
+    leaf1:
+      kind: cisco_n9kv
+    leaf2:
+      kind: cisco_n9kv
+    host1:
+      kind: linux
+    host2:
+      kind: linux
+
+  links:
+    - endpoints: ["spine1:eth1", "leaf1:eth1"]
+    - endpoints: ["spine1:eth2", "leaf2:eth1"]
+    - endpoints: ["spine2:eth1", "leaf1:eth2"]
+    - endpoints: ["spine2:eth2", "leaf2:eth2"]
+    - endpoints: ["leaf1:eth3", "host1:eth1"]
+    - endpoints: ["leaf2:eth3", "host2:eth1"]
