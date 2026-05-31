@@ -127,7 +127,7 @@ This makes it visible at a glance: VNI 10010 = L2, VNI 50001 = L3.
 Like L2VNIs, L3VNIs need an RD and RT. The L3VNI's RT controls which
 leaves participate in this VRF's routing.
 
-### Decision 3: SVI (Switched Virtual Interface) with `fabric forwarding mode anycast-gateway`
+### Decision 3: SVI with `fabric forwarding mode anycast-gateway`
 
 For each VLAN that needs L3, we create an SVI (`interface Vlan10`).
 This SVI:
@@ -139,56 +139,79 @@ This SVI:
 Without that one line, the SVI would be a regular SVI with regular ARP
 behavior. With it, the SVI uses the fabric-wide anycast MAC and
 suppresses ARP responses for IPs the EVPN control plane already knows
-about. The line is small; the consequences are profound.
+about.
 
-### Decision 4: ARP suppression
+### Decision 4: Redistribute connected subnets into BGP
+
+This is the one that bit us during initial lab testing — worth its
+own section.
+
+For Type-5 EVPN routes (IP prefix advertisements) to flow between
+leaves, the connected SVI subnets need to be in **BGP's IPv4 table
+for the tenant VRF**. The line `advertise l2vpn evpn` under the VRF's
+ipv4 unicast AF converts BGP IPv4 routes to EVPN Type-5 routes, but
+**only routes BGP already knows about**.
+
+By default, BGP doesn't automatically pull connected routes from the
+RIB. You have to tell it explicitly:
+
+```
+route-map ALL_ROUTES permit 10
+!
+router bgp 65000
+  vrf Tenant-A
+    address-family ipv4 unicast
+      redistribute direct route-map ALL_ROUTES
+      advertise l2vpn evpn
+```
+
+The route-map with no match clauses matches everything (a "permit-all"
+route-map). `redistribute direct` pulls connected routes into BGP, and
+then `advertise l2vpn evpn` exports them as Type-5.
+
+Without this, the fabric will look correct (BGP sessions up, L3VNI
+defined, anycast gateways alive) but **cross-subnet ping fails
+silently** because no leaf advertises a path to the remote subnet.
+
+### Decision 5: The `advertise-pip` knob
+
+When a leaf advertises a Type-5 route, it needs to say "the next-hop
+for this prefix is me." With anycast gateway, **every leaf** could
+equally be the next-hop. The fabric uses each leaf's **PIP** (Primary
+IP — its loopback1) as the next-hop, not the anycast IP.
+
+`advertise-pip` under BGP EVPN tells the leaf to put its own PIP as
+next-hop on EVPN Type-5 advertisements. Without it, Type-5 routes
+might point at the anycast IP, which isn't unique across the fabric.
+
+### Decision 6: ARP suppression
 
 Anycast gateways enable **ARP suppression**. When a leaf knows (via
 EVPN Type-2 routes) the MAC for an IP, and a host ARPs for that IP,
 the leaf replies locally instead of flooding the ARP to the fabric.
 
 This is enormous for scale. Without it, every ARP gets flooded to
-every leaf in the fabric (via ingress replication to every VTEP).
-With it, ARPs stay local most of the time. In a 100-leaf fabric this
-is the difference between "fabric works" and "fabric melts."
+every leaf in the fabric. With it, ARPs stay local most of the time.
 
 ARP suppression is automatically enabled when you enable anycast
 gateway. You just see fewer ARP broadcasts in the wild.
-
-### Decision 5: The advertise-pip / advertise-virtual-rmac knobs
-
-When a leaf advertises a Type-5 route (IP prefix) via EVPN, it needs to
-say "the next-hop for this prefix is me." With anycast gateway, **every
-leaf** that has the SVI configured could equally be the next-hop. The
-fabric uses the leaf's **PIP** (Primary IP — its loopback1) as the
-next-hop, not the anycast IP.
-
-The line `advertise-pip` under BGP EVPN tells the leaf to put its
-own PIP as next-hop on EVPN Type-5 advertisements, regardless of
-which interface originated the route. This is what makes anycast
-gateway work correctly for inter-subnet routing.
 
 ## What you'll build
 
 **Same fabric, additional config on leaves**:
 
-1. Configure the distributed gateway MAC (under `fabric forwarding`)
-2. Create VRF Tenant-A, with an associated L3VNI 50001
-3. Map VLAN 20 to L2VNI 10020 (we add a second VLAN this session)
-4. Create SVI for VLAN 10 (anycast gateway 10.100.10.1)
-5. Create SVI for VLAN 20 (anycast gateway 10.100.20.1)
-6. Add the L3VNI under BGP EVPN with RT/RD
-7. Add member VNIs to nve1 for VNI 50001 (L3) and VNI 10020 (L2)
-8. Add `advertise-pip` to BGP
+1. Configure the distributed gateway MAC
+2. Create a "permit all" route-map for redistribution
+3. Create VRF Tenant-A, with an associated L3VNI 50001
+4. Map VLAN 20 to L2VNI 10020 (a second VLAN this session)
+5. Create SVIs for VLAN 10 and VLAN 20 (both anycast)
+6. Create the L3VNI carrier SVI (Vlan99 in the VRF)
+7. Add NVE members for VNI 10020 (L2) and VNI 50001 (L3)
+8. Configure BGP EVPN with `advertise-pip` plus the VRF redistribution
 
 **Hosts**:
-- host1 stays on VLAN 10, gets a gateway IP `10.100.10.1`
-- host2 moves to VLAN 20 (a different subnet), gets a gateway IP
-  `10.100.20.1`
-- After config: host1 in 10.100.10.0/24 should ping host2 in
-  10.100.20.0/24, with routing happening on each leaf
-
-(This is the moment where "L2 stretch" becomes "L3 fabric.")
+- host1 stays on VLAN 10, gets gateway `10.100.10.1`
+- host2 moves to VLAN 20, gets gateway `10.100.20.1`
 
 ## Deploying
 
@@ -197,34 +220,53 @@ containerlab destroy -t labs/03-l2vni/topology.clab.yml --cleanup
 ./scripts/deploy.sh 04-anycast-gw
 ```
 
-Usual 15-25 min boot. Same NX-OS quirks as before.
+Usual 15-25 min boot.
 
-## Configuring the hosts (manual again)
+## Configuring the hosts
+
+The hosts in this lab have **two** network interfaces: `eth0` is
+clab's management bridge (with a default route pointing at clab's
+gateway), and `eth1` is the lab interface connected to the leaf.
+
+To make the host send tenant traffic via the leaf, we have to
+**replace** the default route, not just add one. Using `ip route add`
+silently fails because a default already exists via eth0.
 
 ```bash
 # host1: VLAN 10, gateway 10.100.10.1
-docker exec clab-vxlan-evpn-host1 sh -c "ip addr add 10.100.10.10/24 dev eth1 && ip link set eth1 up && ip route add default via 10.100.10.1"
+docker exec clab-vxlan-evpn-host1 sh -c "ip addr add 10.100.10.10/24 dev eth1 && ip link set eth1 up && ip route replace default via 10.100.10.1"
 
 # host2: VLAN 20, gateway 10.100.20.1
-docker exec clab-vxlan-evpn-host2 sh -c "ip addr add 10.100.20.10/24 dev eth1 && ip link set eth1 up && ip route add default via 10.100.20.1"
+docker exec clab-vxlan-evpn-host2 sh -c "ip addr add 10.100.20.10/24 dev eth1 && ip link set eth1 up && ip route replace default via 10.100.20.1"
 ```
 
-> **Note the topology change**: leaf2 now has VLAN 20 on Eth1/3 instead
-> of VLAN 10. The host2 IP is in 10.100.20.0/24. See the leaf2 config.
+The `ip route replace` form overwrites any existing default. Verify
+with:
+
+```bash
+docker exec clab-vxlan-evpn-host1 ip route
+```
+
+You should see `default via 10.100.10.1 dev eth1` — not via eth0.
+
+> **Note**: After this change, hosts lose internet access via clab's
+> management bridge. That's fine for our lab — we don't need internet
+> from inside a tenant subnet. `docker exec` still works because it
+> bypasses host routing.
 
 ## The moment of truth (with packet capture)
 
-This session has **two** moments of truth. Capture both.
+This session has **two** moments of truth.
 
 **First moment**: host1 (VLAN 10) pings its own gateway. Proves anycast
-works.
+works:
 
 ```bash
 docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.10.1
 ```
 
-Should succeed. The reply comes from leaf1 (host1's local leaf) using
-the anycast MAC.
+Should succeed instantly. The reply comes from leaf1 (local leaf) with
+anycast MAC `00:00:22:22:33:33`.
 
 **Second moment**: host1 pings host2. Crossing subnets, crossing leaves.
 
@@ -234,40 +276,26 @@ In one VS Code terminal, start a capture on leaf1's uplink:
 ./scripts/capture.sh leaf1 eth1 04-anycast-cross-subnet 'udp port 4789'
 ```
 
-In another terminal, trigger the traffic:
+In another terminal:
 
 ```bash
 docker exec clab-vxlan-evpn-host1 ping -c 5 10.100.20.10
 ```
 
 If everything works:
-- The ping succeeds
-- The capture has VXLAN frames, but with **VNI 50001** (the L3VNI),
-  not VNI 10010 or 10020. That's symmetric IRB in action — routing
-  happens locally, traffic crosses the fabric in the L3VNI.
-
-The capture stays in `labs/04-anycast-gw/pcaps/` for you (and your
-friends) to open in Wireshark and study.
+- The first packet may be lost (ARP resolution); subsequent ones succeed
+- TTL of the replies is 62 (started at 64, decremented by 2 — one
+  decrement per leaf doing L3 routing)
+- The capture has VXLAN frames with **VNI 50001** (the L3VNI), not
+  10010 or 10020. That's symmetric IRB.
 
 ## What to verify
 
 See [`labs/04-anycast-gw/verify.md`](../labs/04-anycast-gw/verify.md).
-New things to check:
-
-- Distributed gateway MAC is configured (`show fabric forwarding`)
-- SVIs are in the right VRF and have anycast mode
-- L3VNI is up (`show nve vni`)
-- BGP EVPN now has Type-5 routes (IP prefix advertisements)
-- Wireshark shows VNI 50001 on inter-subnet traffic
 
 ## What to break
 
 See [`labs/04-anycast-gw/break-it.md`](../labs/04-anycast-gw/break-it.md).
-Highlights:
-
-- Mismatched anycast MAC on the two leaves (silent ARP confusion)
-- Missing `advertise-pip` (Type-5 routes work, but with wrong next-hop)
-- Symmetric IRB break (deliberately misconfigure L3VNI mapping)
 
 ## What you should be able to explain
 
@@ -278,8 +306,25 @@ Highlights:
 4. Walk me through the path of a packet from host1 (VLAN 10) to host2
    (VLAN 20) including encap/decap stages.
 5. Why is symmetric IRB called "symmetric"?
-6. What is ARP suppression, and how does the leaf know enough to
-   suppress?
+6. What's the role of `redistribute direct` and why is it needed even
+   when `advertise l2vpn evpn` is already there?
+7. What does `advertise-pip` do?
+
+## Lessons from initial lab testing
+
+When this session was first deployed end-to-end, two real issues
+surfaced that the original configs missed. Both are now baked into
+the cfg files and docs, but worth knowing about because they're
+recurring real-world bugs:
+
+1. **`advertise l2vpn evpn` alone is not enough**. You need
+   `redistribute direct route-map ALL_ROUTES` (plus the route-map
+   itself) for connected subnets to make it into EVPN as Type-5
+   routes. Without it, the fabric looks right but pings fail.
+
+2. **Hosts attached via containerlab have a default route via the
+   management bridge**. `ip route add default` silently fails. Use
+   `ip route replace default`.
 
 ## Next
 

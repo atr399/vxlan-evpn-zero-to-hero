@@ -1,34 +1,43 @@
 # Session 4: Verification
 
-## Check 0: Hosts in their respective VLANs and subnets
+## Check 0: Hosts have IPs AND default route via the lab gateway
+
+The most common Session 4 trap. Re-confirm both:
 
 ```bash
 docker exec clab-vxlan-evpn-host1 ip addr show eth1
-docker exec clab-vxlan-evpn-host2 ip addr show eth1
 docker exec clab-vxlan-evpn-host1 ip route
+docker exec clab-vxlan-evpn-host2 ip addr show eth1
 docker exec clab-vxlan-evpn-host2 ip route
 ```
 
-Expected:
-- host1: `10.100.10.10/24`, default route via `10.100.10.1`
-- host2: `10.100.20.10/24`, default route via `10.100.20.1`
+What you want to see for host1:
+- `inet 10.100.10.10/24` on eth1
+- `default via 10.100.10.1 dev eth1` — **not via eth0**
+
+If the default is via eth0, the host will send tenant traffic out the
+wrong interface. Re-run with `ip route replace`:
+
+```bash
+docker exec clab-vxlan-evpn-host1 sh -c "ip route replace default via 10.100.10.1"
+docker exec clab-vxlan-evpn-host2 sh -c "ip route replace default via 10.100.20.1"
+```
 
 ## Check 1: Distributed gateway MAC is set
 
 On either leaf:
 
 ```
-show fabric forwarding
+show running-config | include "anycast-gateway-mac"
 ```
 
-You should see:
+Expected:
 
 ```
-Anycast-Gateway-MAC : 0000.2222.3333
+fabric forwarding anycast-gateway-mac 0000.2222.3333
 ```
 
-This MAC is used by every anycast gateway SVI on this leaf. Both
-leaves must agree.
+This MAC must match on both leaves.
 
 ## Check 2: SVIs are up and in the right VRF
 
@@ -41,26 +50,13 @@ Expected (on either leaf):
 ```
 Vlan10    10.100.10.1     protocol-up/link-up/admin-up
 Vlan20    10.100.20.1     protocol-up/link-up/admin-up
-Vlan99    --              protocol-up/link-up/admin-up
+Vlan99    forward-enabled protocol-up/link-up/admin-up
 ```
 
-Vlan99 has no IP because it's the L3VNI carrier — it just exists as a
-plumbing object linking VNI 50001 to the VRF.
-
-```
-show vrf Tenant-A interface
-```
-
-Lists every interface that's a member of Tenant-A. You should see
-Vlan10, Vlan20, Vlan99.
+Vlan99 shows `forward-enabled` because it's the L3VNI carrier with
+`ip forward` (no IP needed).
 
 ## Check 3: SVIs are in anycast mode
-
-```
-show fabric forwarding ip local-host-db vrf Tenant-A
-```
-
-Or simpler — check the running-config for `fabric forwarding mode`:
 
 ```
 show running-config interface Vlan10 | include "fabric forwarding"
@@ -74,37 +70,51 @@ Should show `fabric forwarding mode anycast-gateway`.
 show nve vni
 ```
 
-Now shows **three** VNIs:
+Now shows **three** VNIs — two L2 and one L3:
 
 ```
-Interface VNI    Multicast-group State Mode Type [BD/VRF]   Flags
+Interface VNI    Multicast-group State Mode Type [BD/VRF]
 nve1      10010  UnicastBGP      Up    CP   L2 [10]
 nve1      10020  UnicastBGP      Up    CP   L2 [20]
-nve1      50001  UnicastBGP      Up    CP   L3 [Tenant-A]
+nve1      50001  n/a             Up    CP   L3 [Tenant-A]
 ```
 
-The L3VNI shows `L3 [Tenant-A]` in the Type column — it's bound to
-the VRF, not a VLAN.
+The L3VNI shows `L3 [Tenant-A]` — bound to the VRF, not a VLAN.
 
-## Check 5: BGP EVPN now shows Type-5 routes
+## Check 5: BGP EVPN shows Type-5 routes
 
-After ping (next step) triggers route exchange:
+This is the check that catches the redistribute bug. After hosts have
+been pinged at least once:
+
+```
+show bgp l2vpn evpn summary
+```
+
+Look at the route-type breakdown:
+
+```
+Neighbor      T    AS Type-1 Type-2 Type-3 Type-4 Type-5 ...
+10.0.0.11     I 65000 0      3      2      0      2      ...
+10.0.0.12     I 65000 0      3      2      0      2      ...
+```
+
+**Type-5 must be non-zero.** If it's 0:
+- Confirm `redistribute direct route-map ALL_ROUTES` is present:
+  ```
+  show running-config | section "router bgp"
+  ```
+- Confirm the route-map exists:
+  ```
+  show route-map ALL_ROUTES
+  ```
 
 ```
 show bgp l2vpn evpn route-type 5
 ```
 
-Expected: Type-5 routes for `10.100.10.0/24` and `10.100.20.0/24`,
-both originated from both leaves (since both leaves have both SVIs).
-Format:
-
-```
-Route Distinguisher: 10.0.0.21:3       (L3VNI 50001)
-*>l[5]:[0]:[0]:[24]:[10.100.10.0]/224
-```
-
-Type-5 = IP Prefix route. The 24 is the prefix length. These routes
-let inter-subnet routing work across the fabric.
+Should show Type-5 routes for `10.100.10.0/24` and `10.100.20.0/24`,
+originated locally (Path type: local) AND received from the remote
+leaf via the spine RRs (Path type: internal).
 
 ## Check 6: VRF route table shows fabric-learned prefixes
 
@@ -112,23 +122,35 @@ let inter-subnet routing work across the fabric.
 show ip route vrf Tenant-A
 ```
 
-You should see:
-- Connected: `10.100.10.0/24` and `10.100.20.0/24` (your local SVIs)
-- BGP EVPN: prefixes from the remote leaf, with next-hop = remote
-  VTEP
+Look for entries with `via 10.0.1.X` (remote VTEP IP) — those are the
+EVPN-learned routes. You'll also see `direct` routes for your own
+SVIs and `hmm` (host mobility manager) entries when hosts have been
+seen.
 
-This is the "fabric as a router" view.
+## Check 7: BGP IPv4 table for the VRF (the redistribute check)
 
-## Check 7: Host can ping its own gateway (anycast works)
+```
+show bgp ipv4 unicast vrf Tenant-A
+```
+
+You should see entries marked with **`r`** (redistributed):
+
+```
+*>r10.100.10.0/24    0.0.0.0    0    100    32768 ?
+*>r10.100.20.0/24    0.0.0.0    0    100    32768 ?
+```
+
+The `r` flag confirms `redistribute direct` is working. Without it,
+Type-5 routes won't be generated.
+
+## Check 8: Host can ping its own gateway (anycast works)
 
 ```bash
 docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.10.1
 ```
 
-Should succeed with sub-millisecond latency (it's the local leaf
-answering). The reply comes from the anycast MAC `0000.2222.3333`.
-
-Verify the MAC from the host's perspective:
+Should succeed with sub-millisecond to ~1ms latency (local leaf
+answering). Verify the anycast MAC:
 
 ```bash
 docker exec clab-vxlan-evpn-host1 arp -n
@@ -136,52 +158,51 @@ docker exec clab-vxlan-evpn-host1 arp -n
 
 You should see `10.100.10.1` with HWaddress `00:00:22:22:33:33`.
 
-## Check 8: Cross-subnet ping (the moment of truth)
+## Check 9: Cross-subnet ping (the moment of truth)
 
 ```bash
 docker exec clab-vxlan-evpn-host1 ping -c 5 10.100.20.10
 ```
 
-Should succeed. This is host1 in VLAN 10/subnet 10 talking to host2 in
-VLAN 20/subnet 20 — across two leaves.
+Should succeed. Look at the TTL in the reply — it should be **62**
+(started at 64, decremented twice by the two leaves performing L3).
+That TTL decrement is your visual proof of symmetric IRB.
 
-## Check 9: Packet capture — confirm L3VNI in use
+The first packet may be lost during ARP resolution. Subsequent
+packets should have consistent low-millisecond latency.
 
-In one terminal, start the capture:
+## Check 10: Packet capture — confirm L3VNI in use
+
+In one terminal:
 
 ```bash
 ./scripts/capture.sh leaf1 eth1 04-cross-subnet-vni50001 'udp port 4789'
 ```
 
-In another terminal, ping again:
+In another:
 
 ```bash
 docker exec clab-vxlan-evpn-host1 ping -c 5 10.100.20.10
 ```
 
-The capture stops automatically. Open the pcap in Wireshark on your
-PC. You should see:
+Open the saved pcap in Wireshark. You should see:
 
-- Outer IPs: 10.0.1.21 (leaf1) <-> 10.0.1.22 (leaf2)
-- VXLAN VNI: **50001** (the L3VNI, NOT 10010 or 10020)
-- Inner: routed traffic with the **anycast MAC** as src/dst on the
-  inner Ethernet header
+- Outer IPs: 10.0.1.21 <-> 10.0.1.22
+- **VXLAN VNI: 50001** (L3VNI — not 10010 or 10020)
+- Inner Ethernet MACs: anycast gateway MAC (`00:00:22:22:33:33`)
+- Inner IPs: host1's IP (10.100.10.10) and host2's IP (10.100.20.10)
 
-This is the visual proof of **symmetric IRB**: routing happens on the
-local leaf into the L3VNI, and the L3VNI carries the traffic across
-the fabric. The destination VLAN's L2VNI (10020) is **not** involved
-in the cross-leaf transit.
-
-Save this pcap. It's permanent evidence the fabric works correctly.
+Save this pcap. It's permanent evidence the fabric uses symmetric IRB.
 
 ## Summary
 
-- All three VNIs (10010, 10020, 50001) operational
-- SVIs in anycast mode, all leaves share the same gateway MAC
-- BGP EVPN Type-5 routes flowing for IP prefixes
-- host1 (VLAN 10) can ping host2 (VLAN 20) across the fabric
-- Wireshark proves the inter-subnet traffic crosses the fabric via
-  the L3VNI, not the L2VNIs
+- Three VNIs operational (10010, 10020, 50001)
+- SVIs in anycast mode, gateway MAC matches across leaves
+- `redistribute direct route-map ALL_ROUTES` configured (the critical
+  fix discovered during initial testing)
+- BGP EVPN Type-5 routes flowing both directions
+- Hosts have default routes via lab gateway (not via clab management)
+- host1 (VLAN 10) pings host2 (VLAN 20) successfully, TTL = 62
+- Wireshark confirms transit happens on VNI 50001
 
-If all checks pass, you have a fully functional VXLAN-EVPN fabric
-with symmetric IRB, the foundation of modern DC networks.
+If all 10 checks pass, Session 4 is complete.
