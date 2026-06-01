@@ -1,20 +1,20 @@
-# Session 6: vPC (Multi-Chassis LAG)
+# Session 6: vPC (Multi-Chassis LAG) + VXLAN Integration
 
-**Prerequisites**: Session 5b working. Multi-VRF with route leak.
-Topology change: this session requires the **expanded topology**
-with peer-link and dual-homed host (Sessions 6+ use additional
-clab links).
+**Prerequisites**: Session 5b working. Topology change required —
+this session and beyond use the **expanded topology** with peer-link
+and dual-homed host.
 
-**Goal**: Dual-home host1 to both leaf1 AND leaf2 so host1 has two
-physical NICs in an LACP bond. The two leaves act as a single
-logical L2 switch from host1's perspective. If leaf1 dies, host1
-keeps working via leaf2 with no host reconfiguration.
+**Goal**: Dual-home host1 across leaf1 and leaf2 so the host has
+two physical NICs in an LACP bond. The two leaves act as one
+logical switch from host1's perspective. Add a shared VTEP IP so
+EVPN advertises host1 from the vPC pair as a unit, not from
+individual leaves.
 
-**Lab folders**: `labs/06a-vpc-base/`, `labs/06b-vpc-host-bond/`
-(coming), `labs/06c-vpc-vxlan/` (coming)
+**Lab folders**: `labs/06a-vpc-base/`, `labs/06b-vpc-host-bond/`,
+`labs/06c-vpc-vxlan/`
 
-**Estimated time**: 60 minutes (this is the densest session in the
-curriculum). 6a alone is ~20 min; 6b and 6c each ~20 min.
+**Estimated time**: 60 minutes total. 6a alone is ~20 min; 6b
+~20 min; 6c ~15 min plus the failover demo.
 
 ---
 
@@ -22,66 +22,48 @@ curriculum). 6a alone is ~20 min; 6b and 6c each ~20 min.
 
 In a real data center, every server has **two** physical NICs.
 Each NIC connects to a different leaf. The two NICs form an LACP
-bond on the server side. From the server's perspective: one logical
-link with double the bandwidth and full leaf-failure protection.
+bond on the server. From the server's perspective: one logical
+link, double the bandwidth, full leaf-failure protection.
 
 The challenge: **two physical switches need to pretend to be one
-switch**. From the server, the bond looks like a single peer
-sending consistent LACP and MAC behavior. The two leaves coordinate
-behind the scenes — that coordination is **vPC** (virtual Port-
-Channel).
+switch.** The host bond sees consistent LACP behavior from both
+leaves; the EVPN fabric sees a single VTEP for traffic destined
+to the host.
 
-Three new physical concepts:
+Three core mechanisms:
 
-| Component | Purpose |
+| Mechanism | Purpose |
 |-----------|---------|
-| **Peer-link** | Bulk traffic link between leaf1 and leaf2 (port-channel100). Carries inter-leaf data plus vPC control messages. |
-| **Peer-keepalive** | Out-of-band heartbeat to detect "is my peer alive?" Separate physical link from the peer-link. |
-| **vPC member ports** | Ports facing the host. leaf1 Eth1/3 and leaf2 Eth1/3 are both members of vPC 10. |
+| **Peer-link** | Bulk traffic link between leaves. Carries data + vPC control. |
+| **Peer-keepalive** | Out-of-band heartbeat. Detects "is my peer alive?" |
+| **Shared VTEP IP** | Loopback1 secondary IP, identical on both leaves. EVPN advertises via this shared IP so the vPC pair looks like one VTEP. |
 
-Three layers of detection answer the question "what's my peer's
-state?":
-
-1. **Both links up** → vPC healthy, both leaves forward traffic
-2. **Peer-link down, keepalive up** → "isolated" mode, secondary
-   leaf shuts its vPC ports to avoid split-brain
-3. **Both links down** → catastrophic; assume split-brain, may
-   need manual recovery
-
-Most production deployments add a 4th detection layer (BGP+BFD)
-but the 3-layer base is what vPC requires.
+The third mechanism — shared VTEP — is what makes vPC + VXLAN
+actually work. Without it, EVPN consistency checks fail and vPC
+member ports never come up.
 
 ---
 
-## Why three checkpoints (6a, 6b, 6c)
+## Why three checkpoints
 
-vPC + VXLAN is the most failure-prone combination in the
-curriculum. Cisco's documentation on the integration is patchy.
-Real deployments routinely hit:
-- Peer-link MTU mismatch
-- Asymmetric LACP behavior between leaves
-- VTEP advertisement conflicts (each leaf advertising its own
-  loopback1 vs. the shared anycast)
-- Underlay convergence interactions with vPC
-
-Splitting into three checkpoints means: if 6c is broken because of
-VXLAN integration, we don't lose the vPC base from 6a/6b.
+vPC + VXLAN is the densest config in the curriculum. Real Cisco
+deployment guides break it into multiple chapters. We do the same:
 
 ```
-6a: Peer-link + peer-keepalive + vPC domain
-    → Checkpoint: vPC peer adjacency formed, but no host bonded yet
+6a: vPC base (peer-link, peer-keepalive, vPC domain)
+    → Checkpoint: vPC peer adjacency formed; no host bonded yet
 
-6b: vPC member port + host LACP bond
-    → Checkpoint: host1 has working LACP bond, can ping host2 via the bond
+6b: vPC + host LACP bond (vPC member port + Linux bonding)
+    → Checkpoint: host1 has working LACP bond — BUT vPC member
+                  port stays down because of consistency failure
 
-6c: vPC + VXLAN integration (shared VTEP)
-    → Checkpoint: EVPN advertises host1 via shared VTEP, not per-leaf
-    → Checkpoint: leaf failure (shutdown one leaf) — host1 traffic survives
+6c: vPC + VXLAN shared VTEP (the keystone fix)
+    → Checkpoint: vPC consistency passes, member ports come up,
+                  EVPN advertises via shared VTEP, failover works
 ```
 
-Each checkpoint is independently testable. If we get to 6b
-successfully, you can stop there and have a working vPC + VXLAN
-fabric — without the shared-VTEP optimization in 6c.
+Each session is independently deployable. Checkpoints help isolate
+bugs.
 
 ---
 
@@ -97,7 +79,7 @@ feature lacp
 
 vpc domain 10
   peer-switch
-  role priority 1                                    # primary (leaf2 gets 2)
+  role priority 1                                    # leaf2 gets priority 2
   peer-keepalive destination 10.20.0.1 source 10.20.0.0 vrf default
   delay restore 150
   peer-gateway
@@ -105,158 +87,224 @@ vpc domain 10
   ip arp synchronize
 
 interface Ethernet1/4
-  description vPC peer-link member
   switchport
   switchport mode trunk
   switchport trunk allowed vlan 1,10,20,30,40,98,99
   channel-group 100 mode active
-  no shutdown
 
 interface port-channel100
-  description vPC peer-link
   switchport mode trunk
   switchport trunk allowed vlan 1,10,20,30,40,98,99
   spanning-tree port type network
   vpc peer-link
 
 interface Ethernet1/5
-  description vPC peer-keepalive link
   no switchport
   mtu 1500
-  no shutdown
-  ip address 10.20.0.0/31    # leaf1
-  # leaf2 gets 10.20.0.1/31
+  ip address 10.20.0.0/31      # 10.20.0.1/31 on leaf2
 ```
 
 ### Design decisions for 6a
 
 **Decision 1: Dedicated peer-keepalive link, not management network**
 
-We use a separate physical link (Eth1/5) with a /31 subnet for
-keepalive instead of the clab management network. Why? Management
-network IPs are dynamic (clab assigns them at deploy time, may
-shift across reboots). A dedicated link gives us stable IPs that
-don't change.
-
-This is also how production fabrics do it — peer-keepalive on a
-dedicated cable means it works even if management connectivity
-breaks.
+We use a separate physical link (Eth1/5) for peer-keepalive instead
+of the clab management network. This matches production practice
+and gives us stable IPs that don't shift across deploys.
 
 **Decision 2: peer-switch + peer-gateway**
 
-`peer-switch` tells STP "treat both leaves as one logical bridge"
-(important for L2 stability). `peer-gateway` tells leaves to act
-as the gateway for each other's anycast IPs (important for
-asymmetric routing scenarios). These two settings together are
-the modern Cisco standard for vPC.
+`peer-switch` makes both leaves advertise the same LACP system ID —
+essential for the host bond to treat them as one peer.
+`peer-gateway` lets each leaf route for the other's anycast IPs —
+important for asymmetric traffic flows.
 
-**Decision 3: ipv6 nd synchronize + ip arp synchronize**
-
-Without these, leaf1 and leaf2 build independent ARP/ND tables.
-With them, they share. This ensures hosts always get a consistent
-ARP reply regardless of which leaf they're reaching.
-
-**Decision 4: delay restore 150**
+**Decision 3: delay restore 150**
 
 When vPC re-forms after a failure, wait 150 seconds before
 re-enabling member ports. Gives BGP/IGP time to converge first.
 Prevents traffic black-holing during recovery.
 
-### What 6a does NOT do
-
-- No vPC member ports yet — host1 is still single-homed to leaf1
-- No VXLAN VTEP coordination — both leaves still advertise their
-  own loopback1 IP
-
-### What you'll do (6a)
-
-This session requires a **topology change** (new physical links
-between leaves and to host1). That means the lab must be
-**redeployed**, not switch.sh'd.
-
-```bash
-# Tear down current lab
-containerlab destroy -t labs/01-underlay/topology.clab.yml --cleanup
-
-# Slow boot the new topology (~15 min — last time you wait)
-./scripts/deploy.sh 01-underlay
-
-# Fast-switch through the curriculum to 6a
-./scripts/switch.sh 06a-vpc-base
-```
-
 ### Key test for 6a
 
 ```
-ssh admin@clab-vxlan-evpn-leaf1
 show vpc
 ```
 
-Look for:
-
-```
-vPC domain id                     : 10
-Peer status                       : peer adjacency formed ok
-vPC keep-alive status             : peer is alive
-Configuration consistency status  : success
-```
-
-If all four lines look like that, **6a is done**. The vPC base is
-ready. Host bonding comes in 6b.
-
-See `labs/06a-vpc-base/verify.md` for the full checklist.
-
-### What we've foreshadowed for 6b
-
-In `vlan 99`, peer-link allowed VLANs include 99. That's the L3VNI
-carrier VLAN. Some Cisco gotchas around vPC + L3VNI require the
-L3VNI VLAN to traverse the peer-link too. We've already configured
-this — it'll matter in 6c.
+Look for: `Peer status: peer adjacency formed ok`. The
+"Configuration inconsistency reason: Secondary IP address does
+not match" warning is **expected** here — we'll fix it in 6c.
 
 ---
 
-## Part 2: Session 6b — vPC Member Port + Host Bond (coming)
+## Part 2: Session 6b — Host LACP Bond
 
-This will add:
+### What we're adding (on top of 6a)
 
-- vPC ID 10 on Ethernet1/3 of both leaves (the port facing host1)
-- Port-channel10 on both leaves with `vpc 10` binding
-- LACP active mode on the host port
-- Linux LACP bond on host1 across eth1 and eth2
+**On both leaves**:
 
-Host config will change — host1 gets `bond0` with eth1+eth2 as
-members. host1's IP moves from eth1 to bond0.
+```
+interface Ethernet1/3         # was access vlan 10 in 6a
+  switchport
+  switchport mode trunk
+  switchport trunk native vlan 10
+  switchport trunk allowed vlan 10
+  channel-group 10 mode active   # joins LACP
 
-Key test: host1 pings host2. Then shut Ethernet1/3 on leaf1 —
-host1 should keep pinging via leaf2 alone.
+interface port-channel10
+  switchport mode trunk
+  switchport trunk native vlan 10
+  switchport trunk allowed vlan 10
+  spanning-tree port type edge trunk
+  mtu 9216
+  vpc 10                          # binds to vPC ID 10
+```
 
-## Part 3: Session 6c — vPC + VXLAN Integration (coming)
+(Same config on both leaves — leaf2 uses Eth1/6 instead of Eth1/3
+because that's the physical port to host1's second NIC.)
 
-This will add the shared-VTEP configuration:
+**On host1** (Linux bonding via sysfs):
 
-- `interface loopback1` gets a secondary IP `10.0.1.100/32` on
-  both leaves
-- NVE source moves to the secondary IP
-- EVPN advertises host1's MAC via the shared VTEP
+```bash
+# Create bond0 in LACP mode
+ip link add bond0 type bond
+echo 802.3ad > /sys/class/net/bond0/bonding/mode
+echo fast > /sys/class/net/bond0/bonding/lacp_rate
+echo 100 > /sys/class/net/bond0/bonding/miimon
 
-Key test: from leaf3 (if it existed) or via show output, see that
-host1's Type-2 route originates from `10.0.1.100` (shared) rather
-than `10.0.1.21` (leaf1-specific) or `10.0.1.22` (leaf2-specific).
+# Enslave eth1 and eth2 to bond0
+ip link set eth1 master bond0
+ip link set eth2 master bond0
 
-This is the most subtle integration point in VXLAN-EVPN and where
-Cisco docs are most ambiguous. Expect 6c to need iteration.
+# Bring up + assign IP to bond0
+ip link set bond0 up
+ip addr add 10.100.10.10/24 dev bond0
+ip route replace default via 10.100.10.1
+```
+
+The sysfs approach is needed because Alpine's `ip link add bond0
+type bond mode 802.3ad` doesn't reliably apply the mode parameter.
+
+### What 6b reveals — the consistency failure
+
+After applying 6b, you'll see something surprising:
+
+```
+show vpc
+
+vPC 10: status down*
+Reason: Global compat check failed
+```
+
+The LACP bond is up on the host. The vPC peer adjacency is up.
+But the vPC member port (Po10) refuses to forward. **Why?**
+
+Cisco's NX-OS treats certain vPC consistency checks as hard
+prerequisites: if **any global parameter mismatches** between the
+two leaves, no vPC member ports come up.
+
+Running:
+```
+show vpc consistency-parameters global
+```
+
+...reveals: `Nve1: Sec IP: 0.0.0.0` on both leaves. The check
+"do you have a matching vPC VIP?" returns false because **neither**
+leaf has a VIP. NX-OS interprets this as a failure rather than
+"both same" (a behavior quirk in 10.5.x).
+
+**This is 6c's job to fix.**
+
+---
+
+## Part 3: Session 6c — Shared VTEP for VXLAN
+
+### The keystone fix
+
+One config line on each leaf:
+
+```
+interface loopback1
+  ip address 10.0.1.100/32 secondary   # same IP on both leaves
+```
+
+### Why this single line matters
+
+When NX-OS sees a matching secondary IP on loopback1 across both
+vPC peers:
+
+1. **vPC consistency check passes**. The previously-failing global
+   compat check now succeeds — member ports come up.
+
+2. **NVE switches to "VPC-VIP-Only" mode**. Instead of advertising
+   EVPN routes with each leaf's primary loopback IP as next-hop,
+   NVE uses the shared secondary (10.0.1.100). Remote leaves see
+   "the vPC pair" as one VTEP.
+
+3. **Load balancing becomes possible**. Remote leaves can choose
+   either leaf1 or leaf2 as the path for traffic to the shared
+   VTEP — both are equivalent in OSPF.
+
+4. **Chassis failover becomes graceful**. If leaf1 dies, leaf2
+   still advertises 10.0.1.100. Remote leaves see the underlay
+   path shift (leaf1→spine no longer reachable), but the EVPN
+   overlay doesn't change. Traffic continues to flow.
+
+You can verify this with:
+```
+show nve interface nve1 detail
+```
+
+Look for:
+```
+VPC Capability: VPC-VIP-Only [notified]
+Source-Interface: loopback1 (primary: 10.0.1.21, secondary: 10.0.1.100)
+```
+
+`[notified]` confirms NX-OS has flipped to using the VIP for
+advertisements.
+
+```
+show bgp l2vpn evpn route-type 2
+```
+
+Host1's MAC entries should now show next-hop `10.0.1.100`, not
+`10.0.1.21`. Look for `SOO:10.0.1.100:0` in the extcommunity —
+the Site-of-Origin marking telling remote leaves "this came from
+the vPC pair."
+
+### The killer demonstration
+
+```bash
+# Continuous ping
+docker exec clab-vxlan-evpn-host1 ping 10.200.10.10
+```
+
+Leave running. In another terminal:
+
+```bash
+docker stop clab-vxlan-evpn-leaf1
+```
+
+Ping continues with 1-2 packet loss during LACP reconvergence,
+then resumes via leaf2 alone. **Host has no idea what happened.**
+Same MAC, same IP, same gateway. From host1's perspective, just
+one of its NICs went down — the bond keeps working.
+
+This is the entire reason vPC exists. Production fabrics rely on
+this for chassis maintenance, hardware failures, software upgrades.
 
 ---
 
 ## What you should be able to explain after Session 6
 
 1. What problem does vPC solve and what's the alternative?
-2. Why does vPC need two separate detection links (peer-link AND
-   peer-keepalive)?
-3. What's "peer-gateway" and why is it on?
-4. What's special about the VTEP in a vPC pair?
-5. What happens if the peer-link fails but peer-keepalive is up?
-6. What's the role of LACP in vPC vs static EtherChannel?
+2. Why are peer-link and peer-keepalive on separate physical links?
+3. What's the role of LACP in vPC vs. static EtherChannel?
+4. Why does vPC + VXLAN need a shared VTEP IP?
+5. What happens to EVPN advertisements when a leaf dies in a vPC
+   pair?
+6. Why does the bond use `lacp_rate fast`?
 
 ---
 
@@ -265,13 +313,34 @@ Cisco docs are most ambiguous. Expect 6c to need iteration.
 - **vPC orphan ports**: ports on the vPC pair that aren't part of
   any vPC. Behavior is asymmetric — non-trivial to reason about.
   Real deployments minimize orphan ports.
-- **vPC + first-hop redundancy (HSRP/VRRP)**: in non-anycast-
-  gateway designs, vPC pairs run HSRP together. Anycast gateway
-  obviates HSRP for VXLAN fabrics but the pattern still appears
-  in mixed-traditional deployments.
-- **vPC fabric peering** (newer Cisco "vPC Fabric Peering"): no
-  physical peer-link, peer-state via fabric BGP. Modern but
-  complex. We're using classic vPC because it teaches the model.
+- **vPC fabric peering** (newer Cisco): no physical peer-link,
+  peer-state via fabric BGP. Modern but complex. We're using
+  classic vPC because it teaches the model.
+- **Stretched vPC**: vPC pair across geographically separated
+  data centers via DCI. Cisco generally advises against; we won't
+  cover.
+
+---
+
+## Lessons from the build
+
+Real things we learned while building this session:
+
+1. **The "Sec IP" warning in 6a wasn't benign.** It became blocking
+   the moment we added a vPC member port in 6b. Cisco's docs treat
+   "this warning persists across config" as a non-issue, but
+   it's the first thing that breaks when you actually try to use
+   vPC. Including the secondary IP from the start prevents this.
+
+2. **Alpine's `ip link add bond0 type bond mode 802.3ad` doesn't
+   reliably apply the mode parameter.** Use sysfs: `echo 802.3ad
+   > /sys/class/net/bond0/bonding/mode`. Native sysfs is more
+   reliable in containers.
+
+3. **The vPC + VXLAN integration is one line of config.** Just
+   `ip address 10.0.1.100/32 secondary` on each leaf's loopback1.
+   But that one line is the difference between "vPC works" and
+   "vPC mysteriously refuses to forward."
 
 ---
 

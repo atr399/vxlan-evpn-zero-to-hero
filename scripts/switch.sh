@@ -205,31 +205,61 @@ case "$SESSION" in
     ;;
   06b-vpc-host-bond)
     echo ""
-    echo "Host setup for 6b — host1 forms LACP bond across eth1+eth2:"
+    echo "Host setup for 6b — host1 forms LACP bond via sysfs (more reliable than ip link options):"
     cat << 'BONDSETUP'
 
   docker exec clab-vxlan-evpn-host1 sh -c '
-    modprobe bonding 2>/dev/null || true
-    ip link set eth1 down 2>/dev/null || true
-    ip link set eth2 down 2>/dev/null || true
+    # Tear down any old bond
+    ip link set bond0 down 2>/dev/null
+    ip link delete bond0 2>/dev/null
+
+    # Recreate bond0 and set mode via sysfs (Alpine's ip cmd does not reliably set mode)
+    ip link add bond0 type bond
+    echo 802.3ad > /sys/class/net/bond0/bonding/mode
+    echo fast > /sys/class/net/bond0/bonding/lacp_rate
+    echo 100 > /sys/class/net/bond0/bonding/miimon
+
+    # Bring slaves down and clear addresses
+    ip link set eth1 down
+    ip link set eth2 down
     ip addr flush dev eth1
     ip addr flush dev eth2
-    ip link add bond0 type bond mode 802.3ad miimon 100 lacp_rate fast 2>/dev/null || true
+
+    # Enslave
     ip link set eth1 master bond0
     ip link set eth2 master bond0
+
+    # Bring up
     ip link set eth1 up
     ip link set eth2 up
     ip link set bond0 up
+
+    # IP on bond0
     ip addr add 10.100.10.10/24 dev bond0
     ip route replace default via 10.100.10.1
   '
 
 BONDSETUP
-    echo "Wait ~30 sec for LACP convergence, then test:"
-    echo "  docker exec clab-vxlan-evpn-host1 cat /proc/net/bonding/bond0"
-    echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.200.10.10"
+    echo "Wait ~30 sec for LACP convergence, then verify:"
+    echo "  docker exec clab-vxlan-evpn-host1 cat /proc/net/bonding/bond0 | head -3"
+    echo "  (expect: Bonding Mode: IEEE 802.3ad Dynamic link aggregation)"
     echo ""
-    echo "On leaf1: ssh admin@clab-vxlan-evpn-leaf1; show vpc"
-    echo "          (expect vPC 10 status = up)"
+    echo "EXPECTED: vPC 10 status DOWN due to consistency failure."
+    echo "  ssh admin@clab-vxlan-evpn-leaf1; show vpc"
+    echo "  (Configuration consistency status: failed - this is intentional)"
+    echo ""
+    echo "Session 6c fixes this with the shared VTEP IP."
+    ;;
+  06c-vpc-vxlan)
+    echo ""
+    echo "No host setup needed for 6c (host1 bond already in place from 6b)."
+    echo ""
+    echo "Verify the keystone fix:"
+    echo "  ssh admin@clab-vxlan-evpn-leaf1"
+    echo "  show vpc        # expect Configuration consistency status: success"
+    echo "  show nve interface nve1 detail   # expect VPC-VIP-Only [notified]"
+    echo ""
+    echo "Then test connectivity:"
+    echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.200.10.10"
     ;;
 esac
