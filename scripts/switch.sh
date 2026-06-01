@@ -1,17 +1,6 @@
 #!/bin/bash
 # Usage: ./scripts/switch.sh <session-folder>
-# Example: ./scripts/switch.sh 02-overlay
-#
-# Pushes a session's cfg files to the ALREADY-RUNNING lab via SSH.
-# Does NOT redeploy, reboot, or destroy anything.
-#
-# Prerequisites:
-#   - Lab already deployed (via ./scripts/deploy.sh <some-session>)
-#   - All four NX-OS nodes are reachable via SSH as admin/admin
-#
-# Forward-only: assumes session N+1's cfg is additive on session N.
-# To go backward (e.g., Session 4 -> Session 1), use ./scripts/deploy.sh
-# for a fresh boot.
+# Example: ./scripts/switch.sh 05a-tenant-b
 
 set -euo pipefail
 
@@ -43,7 +32,6 @@ if ! command -v sshpass >/dev/null 2>&1; then
   exit 1
 fi
 
-# Confirm the lab is actually running
 echo "==> Checking that lab is running..."
 missing=0
 for node in "${NODES[@]}"; do
@@ -65,9 +53,6 @@ if [ "$missing" -gt 0 ]; then
   exit 1
 fi
 
-# Quick SSH probe — if SSH already works, we proceed.
-# If not (e.g., just-deployed lab where vrnetlab is still finalizing),
-# wait briefly.
 echo ""
 echo "==> Verifying SSH is responsive on all nodes..."
 for node in "${NODES[@]}"; do
@@ -92,12 +77,10 @@ for node in "${NODES[@]}"; do
   else
     echo "FAILED — SSH did not respond after 60 sec"
     echo "Try manually: ssh admin@${container}  (password: admin)"
-    echo "If SSH is broken, the lab may need a fresh ./scripts/deploy.sh"
     exit 1
   fi
 done
 
-# Push cfg files in parallel
 echo ""
 echo "==> Pushing $SESSION cfg files in parallel..."
 START_TIME=$(date +%s)
@@ -119,13 +102,6 @@ push_cfg() {
   lines=$(grep -v '^!' "$cfg_file" | grep -v '^[[:space:]]*$' | wc -l)
   echo "[$node] BEGIN push ($lines effective config lines)" >> "$PUSH_LOG"
 
-  # Build the config stream:
-  # - terminal length 0   : no pagination
-  # - terminal dont-ask   : skip Y/N confirmations
-  # - configure terminal  : enter config mode
-  # - <cfg lines, comments and blanks stripped>
-  # - end                 : exit config mode
-  # - copy running ...    : persist
   {
     echo "terminal length 0"
     echo "terminal dont-ask"
@@ -150,19 +126,19 @@ for node in "${NODES[@]}"; do
 done
 wait
 
-# Summary from log
 echo ""
 grep -E '^\[' "$PUSH_LOG" || true
 
-# Verify the session marker is in running-config
 echo ""
 echo "==> Verifying session config landed..."
 case "$SESSION" in
-  01-underlay)    MARKER="router ospf UNDERLAY";              NODE="spine1" ;;
-  02-overlay)     MARKER="address-family l2vpn evpn";         NODE="spine1" ;;
-  03-l2vni)       MARKER="vn-segment 10010";                  NODE="leaf1"  ;;
-  04-anycast-gw)  MARKER="fabric forwarding anycast-gateway-mac"; NODE="leaf1" ;;
-  *)              MARKER="";                                  NODE="leaf1"  ;;
+  01-underlay)      MARKER="router ospf UNDERLAY";              NODE="spine1" ;;
+  02-overlay)       MARKER="address-family l2vpn evpn";         NODE="spine1" ;;
+  03-l2vni)         MARKER="vn-segment 10010";                  NODE="leaf1"  ;;
+  04-anycast-gw)    MARKER="fabric forwarding anycast-gateway-mac"; NODE="leaf1" ;;
+  05a-tenant-b)     MARKER="vrf context Tenant-B";              NODE="leaf1"  ;;
+  05b-route-leak)   MARKER="route-target import 65000:50002";   NODE="leaf1"  ;;
+  *)                MARKER="";                                  NODE="leaf1"  ;;
 esac
 
 if [ -n "$MARKER" ]; then
@@ -187,7 +163,6 @@ echo "============================================================"
 echo "Switched to session $SESSION in ${ELAPSED}s"
 echo "============================================================"
 
-# Print session-specific host setup reminders
 case "$SESSION" in
   03-l2vni)
     echo ""
@@ -204,5 +179,25 @@ case "$SESSION" in
     echo "  docker exec clab-vxlan-evpn-host2 sh -c \"ip addr flush dev eth1; ip addr add 10.100.20.10/24 dev eth1; ip link set eth1 up; ip route replace default via 10.100.20.1\""
     echo ""
     echo "Test:  docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.20.10"
+    ;;
+  05a-tenant-b)
+    echo ""
+    echo "Host setup for this session (host2 moves from Tenant-A to Tenant-B):"
+    echo "  docker exec clab-vxlan-evpn-host1 sh -c \"ip addr flush dev eth1; ip addr add 10.100.10.10/24 dev eth1; ip link set eth1 up; ip route replace default via 10.100.10.1\""
+    echo "  docker exec clab-vxlan-evpn-host2 sh -c \"ip addr flush dev eth1; ip addr add 10.200.10.10/24 dev eth1; ip link set eth1 up; ip route replace default via 10.200.10.1\""
+    echo ""
+    echo "Test 1 (gateway pings - should both work):"
+    echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.10.1"
+    echo "  docker exec clab-vxlan-evpn-host2 ping -c 3 10.200.10.1"
+    echo ""
+    echo "Test 2 (cross-tenant - should FAIL, proving isolation):"
+    echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.200.10.10"
+    ;;
+  05b-route-leak)
+    echo ""
+    echo "No host setup needed (hosts unchanged from 5a)."
+    echo ""
+    echo "Test (cross-tenant ping - should now SUCCEED with TTL=62):"
+    echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.200.10.10"
     ;;
 esac
