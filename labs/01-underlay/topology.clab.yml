@@ -1,23 +1,14 @@
-# Session 1: Underlay with OSPF
-#
-# Topology shape that's reused across every session:
-#   - 2 spines (Cisco Nexus 9000v)
-#   - 2 leaves (Cisco Nexus 9000v)
-#   - 2 hosts (Alpine Linux), one per leaf
-#
-# In this session, hosts are present in the topology but unconfigured.
-# They become active in Session 3 when we build the first L2VNI.
-#
-# Interface mapping (cisco_n9kv kind):
-#   ethN in this file == Ethernet1/N inside NX-OS
-
 name: vxlan-evpn
+
+# Expanded topology supporting Sessions 1 through 11.
+# Session 1-5: only the spine-leaf links and host1-leaf1, host2-leaf2 are used.
+# Session 6+ adds: peer-link between leaves (Eth1/4) and host1's second uplink to leaf2 (Eth1/3).
+# Extra links in earlier sessions are just unused (no traffic, no harm).
 
 topology:
   kinds:
     cisco_n9kv:
       image: vrnetlab/cisco_n9kv:9300-10.5.5
-      startup-config: configs/__clabNodeName__.cfg
     linux:
       image: alpine:latest
 
@@ -36,11 +27,22 @@ topology:
       kind: linux
 
   links:
-    # Spine-leaf full mesh (4 links)
-    - endpoints: ["spine1:eth1", "leaf1:eth1"]   # link-id 1
-    - endpoints: ["spine1:eth2", "leaf2:eth1"]   # link-id 2
-    - endpoints: ["spine2:eth1", "leaf1:eth2"]   # link-id 3
-    - endpoints: ["spine2:eth2", "leaf2:eth2"]   # link-id 4
-    # Host attachment
+    # Spine-leaf fabric (full mesh)
+    - endpoints: ["spine1:eth1", "leaf1:eth1"]
+    - endpoints: ["spine1:eth2", "leaf2:eth1"]
+    - endpoints: ["spine2:eth1", "leaf1:eth2"]
+    - endpoints: ["spine2:eth2", "leaf2:eth2"]
+
+    # Host attachments
+    # host1's primary uplink (used by all sessions)
     - endpoints: ["leaf1:eth3", "host1:eth1"]
+    # host2's uplink (used by all sessions; single-homed for simplicity)
     - endpoints: ["leaf2:eth3", "host2:eth1"]
+
+    # vPC additions (Session 6+)
+    # Peer-link between the two leaves (carries vPC control + data)
+    - endpoints: ["leaf1:eth4", "leaf2:eth4"]
+    # Peer-keepalive — dedicated link for heartbeat (separate from peer-link)
+    - endpoints: ["leaf1:eth5", "leaf2:eth5"]
+    # host1's second uplink for the bond (used only in Session 6+)
+    - endpoints: ["leaf2:eth6", "host1:eth2"]

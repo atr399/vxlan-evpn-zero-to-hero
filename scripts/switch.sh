@@ -1,6 +1,5 @@
 #!/bin/bash
 # Usage: ./scripts/switch.sh <session-folder>
-# Example: ./scripts/switch.sh 05a-tenant-b
 
 set -euo pipefail
 
@@ -49,7 +48,6 @@ done
 if [ "$missing" -gt 0 ]; then
   echo ""
   echo "ERROR: $missing/4 NX-OS containers not running."
-  echo "Run ./scripts/deploy.sh <session> first to bring up a fresh lab."
   exit 1
 fi
 
@@ -76,7 +74,6 @@ for node in "${NODES[@]}"; do
     echo "ready"
   else
     echo "FAILED — SSH did not respond after 60 sec"
-    echo "Try manually: ssh admin@${container}  (password: admin)"
     exit 1
   fi
 done
@@ -138,6 +135,9 @@ case "$SESSION" in
   04-anycast-gw)    MARKER="fabric forwarding anycast-gateway-mac"; NODE="leaf1" ;;
   05a-tenant-b)     MARKER="vrf context Tenant-B";              NODE="leaf1"  ;;
   05b-route-leak)   MARKER="route-target import 65000:50002";   NODE="leaf1"  ;;
+  06a-vpc-base)     MARKER="vpc domain 10";                     NODE="leaf1"  ;;
+  06b-vpc-host-bond) MARKER="vpc 10";                           NODE="leaf1"  ;;
+  06c-vpc-vxlan)    MARKER="10.0.1.100 secondary";              NODE="leaf1"  ;;
   *)                MARKER="";                                  NODE="leaf1"  ;;
 esac
 
@@ -182,22 +182,30 @@ case "$SESSION" in
     ;;
   05a-tenant-b)
     echo ""
-    echo "Host setup for this session (host2 moves from Tenant-A to Tenant-B):"
+    echo "Host setup (host2 moves from Tenant-A to Tenant-B):"
     echo "  docker exec clab-vxlan-evpn-host1 sh -c \"ip addr flush dev eth1; ip addr add 10.100.10.10/24 dev eth1; ip link set eth1 up; ip route replace default via 10.100.10.1\""
     echo "  docker exec clab-vxlan-evpn-host2 sh -c \"ip addr flush dev eth1; ip addr add 10.200.10.10/24 dev eth1; ip link set eth1 up; ip route replace default via 10.200.10.1\""
     echo ""
-    echo "Test 1 (gateway pings - should both work):"
-    echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.10.1"
-    echo "  docker exec clab-vxlan-evpn-host2 ping -c 3 10.200.10.1"
-    echo ""
-    echo "Test 2 (cross-tenant - should FAIL, proving isolation):"
+    echo "Test isolation (should FAIL):"
     echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.200.10.10"
     ;;
   05b-route-leak)
     echo ""
     echo "No host setup needed (hosts unchanged from 5a)."
     echo ""
-    echo "Test (cross-tenant ping - should now SUCCEED with TTL=62):"
+    echo "Test (should SUCCEED with TTL=62):"
+    echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.200.10.10"
+    ;;
+  06a-vpc-base)
+    echo ""
+    echo "No host setup needed for 6a (host1 still single-homed)."
+    echo ""
+    echo "Verify vPC peer adjacency:"
+    echo "  ssh admin@clab-vxlan-evpn-leaf1"
+    echo "  show vpc"
+    echo ""
+    echo "Expected: 'peer adjacency formed ok' and 'peer is alive'"
+    echo "Also: cross-tenant ping from Session 5b should still work:"
     echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.200.10.10"
     ;;
 esac
