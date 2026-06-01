@@ -14,8 +14,6 @@
 ## What this is
 
 > **First time here?** → [QUICKSTART for self-study](docs/QUICKSTART.md)
->
-> **Teaching this material?** → see `teaching/` for lesson plans (coming soon)
 
 Every session in this repo is a self-contained lab. Clone the repo,
 follow the prerequisites once, then for each session:
