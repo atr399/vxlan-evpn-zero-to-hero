@@ -129,16 +129,16 @@ grep -E '^\[' "$PUSH_LOG" || true
 echo ""
 echo "==> Verifying session config landed..."
 case "$SESSION" in
-  01-underlay)      MARKER="router ospf UNDERLAY";              NODE="spine1" ;;
-  02-overlay)       MARKER="address-family l2vpn evpn";         NODE="spine1" ;;
-  03-l2vni)         MARKER="vn-segment 10010";                  NODE="leaf1"  ;;
-  04-anycast-gw)    MARKER="fabric forwarding anycast-gateway-mac"; NODE="leaf1" ;;
-  05a-tenant-b)     MARKER="vrf context Tenant-B";              NODE="leaf1"  ;;
-  05b-route-leak)   MARKER="route-target import 65000:50002";   NODE="leaf1"  ;;
-  06a-vpc-base)     MARKER="vpc domain 10";                     NODE="leaf1"  ;;
-  06b-vpc-host-bond) MARKER="vpc 10";                           NODE="leaf1"  ;;
-  06c-vpc-vxlan)    MARKER="10.0.1.100 secondary";              NODE="leaf1"  ;;
-  *)                MARKER="";                                  NODE="leaf1"  ;;
+  01-underlay)       MARKER="router ospf UNDERLAY";              NODE="spine1" ;;
+  02-overlay)        MARKER="address-family l2vpn evpn";         NODE="spine1" ;;
+  03-l2vni)          MARKER="vn-segment 10010";                  NODE="leaf1"  ;;
+  04-anycast-gw)     MARKER="fabric forwarding anycast-gateway-mac"; NODE="leaf1" ;;
+  05a-tenant-b)      MARKER="vrf context Tenant-B";              NODE="leaf1"  ;;
+  05b-route-leak)    MARKER="route-target import 65000:50002";   NODE="leaf1"  ;;
+  06a-vpc-base)      MARKER="vpc domain 10";                     NODE="leaf1"  ;;
+  06b-vpc-host-bond) MARKER="vpc 10";                            NODE="leaf1"  ;;
+  06c-vpc-vxlan)     MARKER="10.0.1.100 secondary";              NODE="leaf1"  ;;
+  *)                 MARKER="";                                  NODE="leaf1"  ;;
 esac
 
 if [ -n "$MARKER" ]; then
@@ -166,7 +166,7 @@ echo "============================================================"
 case "$SESSION" in
   03-l2vni)
     echo ""
-    echo "Host setup for this session (re-run after switch):"
+    echo "Host setup:"
     echo "  docker exec clab-vxlan-evpn-host1 sh -c \"ip addr flush dev eth1; ip addr add 10.100.10.10/24 dev eth1; ip link set eth1 up\""
     echo "  docker exec clab-vxlan-evpn-host2 sh -c \"ip addr flush dev eth1; ip addr add 10.100.10.11/24 dev eth1; ip link set eth1 up\""
     echo ""
@@ -174,7 +174,7 @@ case "$SESSION" in
     ;;
   04-anycast-gw)
     echo ""
-    echo "Host setup for this session (re-run after switch):"
+    echo "Host setup:"
     echo "  docker exec clab-vxlan-evpn-host1 sh -c \"ip addr flush dev eth1; ip addr add 10.100.10.10/24 dev eth1; ip link set eth1 up; ip route replace default via 10.100.10.1\""
     echo "  docker exec clab-vxlan-evpn-host2 sh -c \"ip addr flush dev eth1; ip addr add 10.100.20.10/24 dev eth1; ip link set eth1 up; ip route replace default via 10.100.20.1\""
     echo ""
@@ -191,21 +191,45 @@ case "$SESSION" in
     ;;
   05b-route-leak)
     echo ""
-    echo "No host setup needed (hosts unchanged from 5a)."
-    echo ""
+    echo "No host setup needed."
     echo "Test (should SUCCEED with TTL=62):"
     echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.200.10.10"
     ;;
   06a-vpc-base)
     echo ""
-    echo "No host setup needed for 6a (host1 still single-homed)."
+    echo "No host setup needed for 6a."
     echo ""
-    echo "Verify vPC peer adjacency:"
+    echo "Verify vPC:"
     echo "  ssh admin@clab-vxlan-evpn-leaf1"
-    echo "  show vpc"
+    echo "  show vpc       # expect 'peer adjacency formed ok'"
+    ;;
+  06b-vpc-host-bond)
     echo ""
-    echo "Expected: 'peer adjacency formed ok' and 'peer is alive'"
-    echo "Also: cross-tenant ping from Session 5b should still work:"
+    echo "Host setup for 6b — host1 forms LACP bond across eth1+eth2:"
+    cat << 'BONDSETUP'
+
+  docker exec clab-vxlan-evpn-host1 sh -c '
+    modprobe bonding 2>/dev/null || true
+    ip link set eth1 down 2>/dev/null || true
+    ip link set eth2 down 2>/dev/null || true
+    ip addr flush dev eth1
+    ip addr flush dev eth2
+    ip link add bond0 type bond mode 802.3ad miimon 100 lacp_rate fast 2>/dev/null || true
+    ip link set eth1 master bond0
+    ip link set eth2 master bond0
+    ip link set eth1 up
+    ip link set eth2 up
+    ip link set bond0 up
+    ip addr add 10.100.10.10/24 dev bond0
+    ip route replace default via 10.100.10.1
+  '
+
+BONDSETUP
+    echo "Wait ~30 sec for LACP convergence, then test:"
+    echo "  docker exec clab-vxlan-evpn-host1 cat /proc/net/bonding/bond0"
     echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.200.10.10"
+    echo ""
+    echo "On leaf1: ssh admin@clab-vxlan-evpn-leaf1; show vpc"
+    echo "          (expect vPC 10 status = up)"
     ;;
 esac
