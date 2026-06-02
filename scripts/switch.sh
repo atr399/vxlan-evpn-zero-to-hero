@@ -138,6 +138,7 @@ case "$SESSION" in
   06a-vpc-base)      MARKER="vpc domain 10";                     NODE="leaf1"  ;;
   06b-vpc-host-bond) MARKER="vpc 10";                            NODE="leaf1"  ;;
   06c-vpc-vxlan)     MARKER="10.0.1.100 secondary";              NODE="leaf1"  ;;
+  07-ebgp-underlay)  MARKER="router bgp 65011";                  NODE="leaf1"  ;;
   *)                 MARKER="";                                  NODE="leaf1"  ;;
 esac
 
@@ -261,5 +262,21 @@ BONDSETUP
     echo ""
     echo "Then test connectivity:"
     echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.200.10.10"
+    ;;
+  07-ebgp-underlay)
+    echo ""
+    echo "No host setup needed for 7 (just a routing protocol refactor)."
+    echo ""
+    echo "EXPECT a 30-60 sec window of partial reachability during the swap."
+    echo "OSPF is being removed, eBGP is forming. Ping may briefly fail. Wait for it."
+    echo ""
+    echo "Verify after ~60 sec:"
+    echo "  ssh admin@clab-vxlan-evpn-leaf1"
+    echo "  show ip ospf neighbors    # expect: OSPF not enabled"
+    echo "  show bgp ipv4 unicast summary    # expect: 2 Established peers"
+    echo "  show bgp l2vpn evpn summary      # expect: 2 Established peers"
+    echo ""
+    echo "Then test connectivity:"
+    echo "  docker exec clab-vxlan-evpn-host1 ping -c 5 10.200.10.10"
     ;;
 esac
