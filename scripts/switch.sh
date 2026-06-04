@@ -138,7 +138,7 @@ case "$SESSION" in
   06a-vpc-base)      MARKER="vpc domain 10";                     NODE="leaf1"  ;;
   06b-vpc-host-bond) MARKER="vpc 10";                            NODE="leaf1"  ;;
   06c-vpc-vxlan)     MARKER="10.0.1.100 secondary";              NODE="leaf1"  ;;
-  07-ebgp-underlay)  MARKER="router bgp 65011";                  NODE="leaf1"  ;;
+  08-l2out)          MARKER="vn-segment 10050";                  NODE="leaf1"  ;;
   *)                 MARKER="";                                  NODE="leaf1"  ;;
 esac
 
@@ -263,20 +263,37 @@ BONDSETUP
     echo "Then test connectivity:"
     echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.200.10.10"
     ;;
-  07-ebgp-underlay)
+  08-l2out)
     echo ""
-    echo "No host setup needed for 7 (just a routing protocol refactor)."
-    echo ""
-    echo "EXPECT a 30-60 sec window of partial reachability during the swap."
-    echo "OSPF is being removed, eBGP is forming. Ping may briefly fail. Wait for it."
-    echo ""
-    echo "Verify after ~60 sec:"
-    echo "  ssh admin@clab-vxlan-evpn-leaf1"
-    echo "  show ip ospf neighbors    # expect: OSPF not enabled"
-    echo "  show bgp ipv4 unicast summary    # expect: 2 Established peers"
-    echo "  show bgp l2vpn evpn summary      # expect: 2 Established peers"
-    echo ""
-    echo "Then test connectivity:"
-    echo "  docker exec clab-vxlan-evpn-host1 ping -c 5 10.200.10.10"
+    echo "Setup for 8 — external switch (Linux bridge) + host3:"
+    cat << 'L2OUT'
+
+  # Configure external as VLAN-aware Linux bridge
+  docker exec clab-vxlan-evpn-external sh -c '
+    ip link add br0 type bridge vlan_filtering 1 2>/dev/null || true
+    ip link set eth1 master br0
+    ip link set eth2 master br0
+    bridge vlan add vid 50 dev eth1 tagged
+    bridge vlan add vid 50 dev br0 self tagged
+    bridge vlan add vid 50 dev eth2 pvid untagged
+    bridge vlan del vid 1 dev eth2 2>/dev/null
+    ip link set eth1 up
+    ip link set eth2 up
+    ip link set br0 up
+  '
+
+  # Configure host3 with VLAN 50 subnet IP
+  docker exec clab-vxlan-evpn-host3 sh -c '
+    ip addr flush dev eth1
+    ip addr add 10.100.50.10/24 dev eth1
+    ip link set eth1 up
+    ip route replace default via 10.100.50.1
+  '
+
+L2OUT
+    echo "Then test L2Out:"
+    echo "  docker exec clab-vxlan-evpn-host3 ping -c 3 10.100.50.1       # external to gateway"
+    echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.50.10      # fabric to external"
+    echo "  docker exec clab-vxlan-evpn-host2 ping -c 3 10.100.50.10      # cross-tenant via leak"
     ;;
 esac
