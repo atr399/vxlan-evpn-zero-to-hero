@@ -24,39 +24,40 @@ containerlab destroy -t labs/01-underlay/topology.clab.yml --cleanup
 ./scripts/switch.sh 08-l2out
 ```
 
-Expected: ~10 sec push. "Config OK on leaf1 (found: vlan 50)".
+Expected: ~10 sec push. "Config OK on leaf1 (found: vn-segment 10050)".
 
-## Step 2: Configure the external switch as a Linux bridge
+## Step 2: Configure the external switch (Linux bridge via VLAN sub-interface)
 
-The "external" container is an Alpine Linux box. Make it act as
-an L2 switch by creating a bridge across its eth1 (toward leaf1)
-and eth2 (toward host3):
+The "external" container is an Alpine Linux box. Alpine doesn't ship
+the `bridge` command, so we use VLAN sub-interface approach instead
+of VLAN-filtering bridge:
 
 ```bash
 docker exec clab-vxlan-evpn-external sh -c '
-  # Create the bridge
-  ip link add br0 type bridge vlan_filtering 1 2>/dev/null || true
+  # Tear down anything prior
+  ip link set br0 down 2>/dev/null
+  ip link delete br0 2>/dev/null
+  ip link delete eth1.50 2>/dev/null
 
-  # Enslave eth1 (trunk to leaf1) and eth2 (access to host3)
-  ip link set eth1 master br0
+  # Create VLAN 50 sub-interface on eth1 (trunk to leaf1)
+  ip link add link eth1 name eth1.50 type vlan id 50
+
+  # Simple bridge (VLAN handled by sub-interface, not bridge filtering)
+  ip link add br0 type bridge
+
+  # Bridge eth1.50 (tagged VLAN 50) with eth2 (access to host3)
+  ip link set eth1.50 master br0
   ip link set eth2 master br0
 
-  # eth1 carries VLAN 50 tagged (trunk side)
-  bridge vlan add vid 50 dev eth1 tagged
-  bridge vlan add vid 50 dev br0 self tagged
-
-  # eth2 is access in VLAN 50 (untagged)
-  bridge vlan add vid 50 dev eth2 pvid untagged
-  bridge vlan del vid 1 dev eth2
-
-  # Bring up everything
+  # Bring up
   ip link set eth1 up
+  ip link set eth1.50 up
   ip link set eth2 up
   ip link set br0 up
 '
 ```
 
-## Step 3: Configure host3 with an IP in VLAN 50 subnet
+## Step 3: Configure host3 with VLAN 50 subnet IP
 
 ```bash
 docker exec clab-vxlan-evpn-host3 sh -c '
@@ -77,8 +78,8 @@ ssh admin@clab-vxlan-evpn-leaf1
 show vlan id 50
 ```
 
-Expected: VLAN 50 active. Ports include Eth1/6 (the L2Out trunk),
-the peer-link Po100, and the SVI Vlan50.
+Expected: VLAN 50 active. Ports include Eth1/6 (L2Out trunk),
+peer-link members (Po100, Eth1/4), and the SVI Vlan50.
 
 ```
 show interface vlan 50
@@ -91,8 +92,7 @@ gateway MAC.
 show nve vni
 ```
 
-Expected: VNI 10050 listed alongside the existing VNIs (10010,
-10020, 10030, 10040, 50001, 50002). State: Up.
+Expected: VNI 10050 listed alongside existing VNIs. State: Up.
 
 ```
 show bgp l2vpn evpn vni-id 10050
@@ -101,29 +101,21 @@ show bgp l2vpn evpn vni-id 10050
 Expected: Type-3 inclusive multicast routes for the shared VTEP
 (10.0.1.100) in L2VNI 10050.
 
-## Step 5: Verify host3's MAC is learned on leaf1
-
-After step 3, host3 will start sending ARP requests for its default
-gateway (10.100.50.1, which is leaf1's anycast SVI). leaf1 will
-learn host3's MAC.
-
-Quick way: ping the gateway from host3:
+## Step 5: External-to-gateway ping
 
 ```bash
 docker exec clab-vxlan-evpn-host3 ping -c 3 10.100.50.1
 ```
 
-Expected: succeeds. host3 can reach its gateway through the
-external switch and Eth1/6 trunk.
+Expected: succeeds, TTL=255 (host3 reaching local-subnet gateway).
 
-Then on leaf1:
+After this, on leaf1:
 
 ```
 show mac address-table vlan 50
 ```
 
-Expected: host3's MAC listed on Eth1/6 (or Po10 if it appears via
-LACP, but here it's plain trunk so Eth1/6 directly).
+Expected: host3's MAC listed on Eth1/6.
 
 ```
 show ip arp vrf Tenant-A 10.100.50.10
@@ -131,79 +123,60 @@ show ip arp vrf Tenant-A 10.100.50.10
 
 Expected: host3's IP resolved to its MAC.
 
-## Step 6: Check that host3 is now in the EVPN fabric
+## Step 6: Fabric-to-external ping
 
-leaf1 should now advertise host3's MAC as a Type-2 EVPN route. On
-leaf2:
+```bash
+docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.50.10
+```
+
+Expected: succeeds, TTL=62 (inter-VLAN routing in Tenant-A).
+
+Data path:
+1. host1 (VLAN 10) → leaf1's Vlan10 SVI (anycast gateway)
+2. leaf1 routes inter-VLAN to Vlan50 (both VLANs in Tenant-A, no L3VNI needed)
+3. leaf1's Vlan50 has host3's MAC on Eth1/6
+4. leaf1 forwards out Eth1/6 to external switch
+5. External bridge forwards via eth2 to host3
+
+## Step 7: EVPN learning across leaves
+
+On leaf2:
 
 ```
 ssh admin@clab-vxlan-evpn-leaf2
 show bgp l2vpn evpn route-type 2
 ```
 
-Expected: a Type-2 entry for host3's MAC, originated from
-10.0.1.100 (the shared VTEP), in L2VNI 10050.
+Expected: A Type-2 entry for host3's MAC, originated from
+10.0.1.100 (shared VTEP), in L2VNI 10050. This means leaf2 has
+learned host3 via EVPN.
 
-## Step 7: The cross-fabric ping — the proof of L2Out
-
-host1 (fabric-attached, VLAN 10, 10.100.10.10) should be able to
-reach host3 (external-attached, VLAN 50, 10.100.50.10) via
-inter-VLAN routing in Tenant-A.
+## Step 8: Cross-tenant + L2Out ping
 
 ```bash
-docker exec clab-vxlan-evpn-host1 ping -c 5 10.100.50.10
+docker exec clab-vxlan-evpn-host2 ping -c 3 10.100.50.10
 ```
 
-Expected: succeeds, TTL=62.
+Expected: succeeds.
 
-The data path:
-1. host1 (VLAN 10) sends to 10.100.50.10
-2. host1's anycast gateway is leaf1's Vlan10 SVI
-3. leaf1 routes inter-VLAN to Vlan50 (same VRF Tenant-A, no L3VNI)
-4. leaf1's Vlan50 has host3's MAC learned via Eth1/6
-5. leaf1 forwards frame out Eth1/6 to external switch
-6. External switch (Linux bridge) forwards to host3 on eth2
-
-**No VXLAN encapsulation used** for this path because host3 is
-locally attached to leaf1 in the same VLAN. The fabric only uses
-VXLAN when traffic must cross between leaves.
-
-## Step 8: The cross-VLAN-via-fabric ping (more interesting)
-
-Move host3's traffic across the fabric by having host2 (Tenant-B
-via route leak) try to reach host3:
-
-```bash
-docker exec clab-vxlan-evpn-host2 ping -c 5 10.100.50.10
-```
-
-Expected: succeeds (route leak from Session 5b is still in effect).
-
-This is more interesting because:
-1. host2 (Tenant-B) on leaf2 sends to 10.100.50.10
-2. leaf2 routes via the leaked route to Tenant-A
-3. leaf2 needs to reach host3 — looks up EVPN Type-2 route
-4. Type-2 says host3 is at VTEP 10.0.1.100 (the shared VIP)
-5. leaf2 sends VXLAN-encapsulated packet to 10.0.1.100
-6. The VIP belongs to the vPC pair; either leaf1 or leaf2
-   receives it. If leaf1: forwards out Eth1/6 to external →
-   host3. If leaf2: forwards over peer-link to leaf1 (since
-   leaf1 has the local L2 connection to host3) → out Eth1/6.
-
-Test it:
-
-```bash
-docker exec clab-vxlan-evpn-host2 ping -c 5 10.100.50.10
-```
+Data path:
+1. host2 (Tenant-B, on leaf2) → 10.100.50.10
+2. leaf2 looks up via route-leak from Session 5b → Tenant-A
+3. leaf2 needs to reach host3 — checks EVPN Type-2
+4. Type-2 says host3 is at VTEP 10.0.1.100 (shared VIP)
+5. leaf2 VXLAN-encaps to 10.0.1.100
+6. Packet arrives at either leaf1 or leaf2 (anycast). If leaf2:
+   forwards over peer-link to leaf1. Either way ends at leaf1.
+7. leaf1 decaps, forwards out Eth1/6 to external → host3
 
 ## Summary
 
 If Steps 1-8 pass, Session 8 is verified:
 - VLAN 50 created and operational on the leaves
 - L2VNI 10050 in EVPN
-- External switch bridging traffic between leaf1 and host3
+- External Linux bridge bridging traffic between leaf1 and host3
 - host3 MAC learned by EVPN fabric
-- Cross-VLAN routing to host3 works (host1 → host3)
+- Inter-VLAN routing to host3 works (host1 → host3)
 - Cross-tenant routing to host3 works (host2 → host3 via leak)
 
 You've extended an L2VNI from the VXLAN fabric out to a non-fabric
@@ -212,52 +185,44 @@ modern data centers.
 
 ## Troubleshooting
 
-### VLAN 50 not active on leaf1
+### "exec: bridge: executable file not found"
 
-```
-show vlan id 50
-```
-
-If the VLAN doesn't show as "active": check that the cfg push
-succeeded. Look at `scripts/_push.log`.
+Alpine doesn't ship the `bridge` command. The VLAN sub-interface
+approach above sidesteps this — we don't use `bridge vlan ...`
+commands.
 
 ### host3 can't ping 10.100.50.1
 
-Check the external bridge setup:
-
+Check the external setup:
 ```bash
-docker exec clab-vxlan-evpn-external bridge vlan
+docker exec clab-vxlan-evpn-external ip link show
 ```
 
-Should show:
-- eth1: VLAN 50 tagged
-- eth2: VLAN 50 untagged, pvid
+Expected: br0 exists, eth1.50 exists with `master br0`, eth2 with
+`master br0`.
 
-If the VLAN setup is wrong, re-run the external bridge setup
-commands from Step 2.
+If anything is missing, re-run the Step 2 commands.
 
 ### host1 can ping 10.100.50.1 but not 10.100.50.10
 
 That means routing to host3's subnet works (leaf1 has the local
 subnet) but the L2 path to host3 is broken.
 
-Check on leaf1:
+On leaf1:
 ```
 show mac address-table vlan 50
 ```
 
-If host3's MAC isn't there: traffic isn't reaching the leaf from
-host3. Check Eth1/6 status:
+If host3's MAC isn't there: check Eth1/6 status:
 ```
 show interface Ethernet1/6 status
 ```
 
-Should be `trunk` and `connected`. If `notconnect`: clab veth
-didn't materialize, redeploy needed.
+Should be `trunk` and `connected`.
 
 ### host2 → host3 fails
 
-Most likely the route leak from Session 5b got dropped. Verify:
+Verify route leak still in place:
 ```
 show ip route vrf Tenant-B 10.100.50.0
 ```

@@ -265,19 +265,30 @@ BONDSETUP
     ;;
   08-l2out)
     echo ""
-    echo "Setup for 8 — external switch (Linux bridge) + host3:"
+    echo "Setup for 8 — external switch (Linux bridge via VLAN sub-interface) + host3:"
+    echo "(Alpine doesn't ship 'bridge' command, so we use ip link with VLAN sub-interface)"
     cat << 'L2OUT'
 
-  # Configure external as VLAN-aware Linux bridge
+  # Configure external as a simple Linux bridge with VLAN sub-interface
   docker exec clab-vxlan-evpn-external sh -c '
-    ip link add br0 type bridge vlan_filtering 1 2>/dev/null || true
-    ip link set eth1 master br0
+    # Tear down any prior setup
+    ip link set br0 down 2>/dev/null
+    ip link delete br0 2>/dev/null
+    ip link delete eth1.50 2>/dev/null
+
+    # Create VLAN 50 sub-interface on eth1 (the trunk toward leaf1)
+    ip link add link eth1 name eth1.50 type vlan id 50
+
+    # Simple bridge (no VLAN filtering needed - VLAN handled by sub-interface)
+    ip link add br0 type bridge
+
+    # Bridge eth1.50 (tagged VLAN 50) with eth2 (access to host3)
+    ip link set eth1.50 master br0
     ip link set eth2 master br0
-    bridge vlan add vid 50 dev eth1 tagged
-    bridge vlan add vid 50 dev br0 self tagged
-    bridge vlan add vid 50 dev eth2 pvid untagged
-    bridge vlan del vid 1 dev eth2 2>/dev/null
+
+    # Bring everything up
     ip link set eth1 up
+    ip link set eth1.50 up
     ip link set eth2 up
     ip link set br0 up
   '
