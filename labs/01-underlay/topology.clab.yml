@@ -1,6 +1,10 @@
 name: vxlan-evpn
 
-# Expanded topology supporting Sessions 1 through 11.
+# Topology supporting Sessions 1 through 11.
+# Session 1-5: spine-leaf links + host1-leaf1, host2-leaf2.
+# Session 6+ adds: peer-link, host1 vPC bond second leg.
+# Session 8+ adds: external L2 switch + host3 (L2Out).
+# Session 9+ adds: extrouter (cEOS) dual-attached to both leaves + host_internet (L3Out).
 
 topology:
   kinds:
@@ -8,6 +12,8 @@ topology:
       image: vrnetlab/cisco_n9kv:9300-10.5.5
     linux:
       image: alpine:latest
+    arista_ceos:
+      image: ceos:4.30.1F
 
   nodes:
     spine1:
@@ -27,23 +33,33 @@ topology:
     host3:
       kind: linux
     extrouter:
-      kind: linux
-      # Now a plain Alpine container - we install FRR at runtime via switch.sh.
-      # The frrouting/frr image had network namespace stability issues with clab.
+      kind: arista_ceos
+      startup-config: labs/09-l3out/extrouter/extrouter.cfg
     host_internet:
       kind: linux
 
   links:
+    # Spine-leaf fabric
     - endpoints: ["spine1:eth1", "leaf1:eth1"]
     - endpoints: ["spine1:eth2", "leaf2:eth1"]
     - endpoints: ["spine2:eth1", "leaf1:eth2"]
     - endpoints: ["spine2:eth2", "leaf2:eth2"]
+
+    # Host attachments
     - endpoints: ["leaf1:eth3", "host1:eth1"]
     - endpoints: ["leaf2:eth3", "host2:eth1"]
+
+    # vPC peer-link + keepalive + host1 second bond leg
     - endpoints: ["leaf1:eth4", "leaf2:eth4"]
     - endpoints: ["leaf1:eth5", "leaf2:eth5"]
     - endpoints: ["leaf2:eth6", "host1:eth2"]
+
+    # L2Out: external switch
     - endpoints: ["leaf1:eth6", "external:eth1"]
     - endpoints: ["external:eth2", "host3:eth1"]
+
+    # L3Out: extrouter (cEOS) dual-attached to leaf1 AND leaf2
     - endpoints: ["leaf1:eth7", "extrouter:eth1"]
-    - endpoints: ["extrouter:eth2", "host_internet:eth1"]
+    - endpoints: ["leaf2:eth7", "extrouter:eth2"]
+    # And host_internet behind extrouter
+    - endpoints: ["extrouter:eth3", "host_internet:eth1"]
