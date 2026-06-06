@@ -34,7 +34,7 @@ topology:
       kind: linux
     extrouter:
       kind: arista_ceos
-      startup-config: labs/09-l3out/extrouter/extrouter.cfg
+      startup-config: ../09-l3out/extrouter/extrouter.cfg
     host_internet:
       kind: linux
 
