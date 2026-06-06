@@ -1,177 +1,7 @@
 [spine1] BEGIN push (45 effective config lines)
-[leaf1] BEGIN push (245 effective config lines)
 [spine2] BEGIN push (45 effective config lines)
+[leaf1] BEGIN push (245 effective config lines)
 [leaf2] BEGIN push (232 effective config lines)
-
-terminal length 0
-terminal dont-ask
-configure terminal
-hostname leaf2
-feature ospf
-feature bgp
-feature nv overlay
-nv overlay evpn
-feature interface-vlan
-feature vn-segment-vlan-based
-feature vpc
-feature lacp
-fabric forwarding anycast-gateway-mac 0000.2222.3333
-route-map ALL_ROUTES permit 10
-vlan 10
-  name TenantA-Web
-  vn-segment 10010
-vlan 20
-  name TenantA-App
-  vn-segment 10020
-vlan 30
-  name TenantB-Web
-  vn-segment 10030
-vlan 40
-  name TenantB-App
-  vn-segment 10040
-vlan 50
-  name TenantA-L2Out
-  vn-segment 10050
-vlan 99
-  name L3VNI-TenantA
-  vn-segment 50001
-vlan 98
-  name L3VNI-TenantB
-  vn-segment 50002
-vrf context Tenant-A
-  vni 50001
-  rd auto
-  address-family ipv4 unicast
-    route-target both auto
-    route-target both auto evpn
-    route-target import 65000:50002
-    route-target import 65000:50002 evpn
-vrf context Tenant-B
-  vni 50002
-  rd auto
-  address-family ipv4 unicast
-    route-target both auto
-    route-target both auto evpn
-    route-target import 65000:50001
-    route-target import 65000:50001 evpn
-vpc domain 10
-  peer-switch
-  role priority 2
-  peer-keepalive destination 10.20.0.0 source 10.20.0.1 vrf default
-  delay restore 150
-  peer-gateway
-  ipv6 nd synchronize
-  ip arp synchronize
-interface loopback0
-  description Router-ID and OSPF source
-  ip address 10.0.0.22/32
-  ip router ospf UNDERLAY area 0.0.0.0
-interface loopback1
-  description VTEP NVE source
-  ip address 10.0.1.22/32
-  ip address 10.0.1.100/32 secondary
-  ip router ospf UNDERLAY area 0.0.0.0
-interface Vlan10
-  description Tenant-A VLAN 10 anycast gateway
-  no shutdown
-  vrf member Tenant-A
-  ip address 10.100.10.1/24
-  fabric forwarding mode anycast-gateway
-interface Vlan20
-  description Tenant-A VLAN 20 anycast gateway
-  no shutdown
-  vrf member Tenant-A
-  ip address 10.100.20.1/24
-  fabric forwarding mode anycast-gateway
-interface Vlan50
-  description Tenant-A VLAN 50 anycast gateway (L2Out)
-  no shutdown
-  vrf member Tenant-A
-  ip address 10.100.50.1/24
-  fabric forwarding mode anycast-gateway
-interface Vlan30
-  description Tenant-B VLAN 30 anycast gateway
-  no shutdown
-  vrf member Tenant-B
-  ip address 10.200.10.1/24
-  fabric forwarding mode anycast-gateway
-interface Vlan40
-  description Tenant-B VLAN 40 anycast gateway
-  no shutdown
-  vrf member Tenant-B
-  ip address 10.200.20.1/24
-  fabric forwarding mode anycast-gateway
-interface Vlan99
-  description L3VNI carrier for Tenant-A
-  no shutdown
-  vrf member Tenant-A
-  ip forward
-  no ip redirects
-interface Vlan98
-  description L3VNI carrier for Tenant-B
-  no shutdown
-  vrf member Tenant-B
-  ip forward
-  no ip redirects
-interface port-channel100
-  description vPC peer-link
-  switchport
-  switchport mode trunk
-  switchport trunk allowed vlan 1,10,20,30,40,50,98,99
-  spanning-tree port type network
-  vpc peer-link
-interface Ethernet1/4
-  description vPC peer-link member
-  switchport
-  switchport mode trunk
-  switchport trunk allowed vlan 1,10,20,30,40,50,98,99
-  channel-group 100 mode active
-  no shutdown
-interface Ethernet1/5
-  description vPC peer-keepalive link
-  no switchport
-  mtu 1500
-  no shutdown
-  ip address 10.20.0.1/31
-interface Ethernet1/1
-  description to spine1 Eth1/2
-  no switchport
-  mtu 9216
-  no shutdown
-  ip address 10.10.2.1/31
-  ip ospf network point-to-point
-  ip router ospf UNDERLAY area 0.0.0.0
-interface Ethernet1/2
-  description to spine2 Eth1/2
-  no switchport
-  mtu 9216
-  no shutdown
-  ip address 10.10.4.1/31
-  ip ospf network point-to-point
-  ip router ospf UNDERLAY area 0.0.0.0
-interface Ethernet1/3
-  description to host2 (VLAN 30)
-  switchport
-  switchport mode access
-  switchport access vlan 30
-  no shutdown
-interface Ethernet1/6
-  description to host1 bond (vPC 10 member, second leg)
-  switchport
-  switchport mode trunk
-  switchport trunk native vlan 10
-  switchport trunk allowed vlan 10
-  channel-group 10 mode active
-  no shutdown
-interface port-channel10
-  description host1 bond - vPC 10
-  switchport
-  switchport mode trunk
-  switchport trunk native vlan 10
-  switchport trunk allowed vlan 10
-  spanning-tree port type edge trunk
-  mtu 9216
-  vpc 
 
 terminal length 0
 terminal dont-ask
@@ -393,7 +223,177 @@ interface Ethernet1/6
   switchport
   switchport mode trunk
   switchport trunk allowed vlan 50
-  no terminal length 0
+  no 
+
+terminal length 0
+terminal dont-ask
+configure terminal
+hostname leaf2
+feature ospf
+feature bgp
+feature nv overlay
+nv overlay evpn
+feature interface-vlan
+feature vn-segment-vlan-based
+feature vpc
+feature lacp
+fabric forwarding anycast-gateway-mac 0000.2222.3333
+route-map ALL_ROUTES permit 10
+vlan 10
+  name TenantA-Web
+  vn-segment 10010
+vlan 20
+  name TenantA-App
+  vn-segment 10020
+vlan 30
+  name TenantB-Web
+  vn-segment 10030
+vlan 40
+  name TenantB-App
+  vn-segment 10040
+vlan 50
+  name TenantA-L2Out
+  vn-segment 10050
+vlan 99
+  name L3VNI-TenantA
+  vn-segment 50001
+vlan 98
+  name L3VNI-TenantB
+  vn-segment 50002
+vrf context Tenant-A
+  vni 50001
+  rd auto
+  address-family ipv4 unicast
+    route-target both auto
+    route-target both auto evpn
+    route-target import 65000:50002
+    route-target import 65000:50002 evpn
+vrf context Tenant-B
+  vni 50002
+  rd auto
+  address-family ipv4 unicast
+    route-target both auto
+    route-target both auto evpn
+    route-target import 65000:50001
+    route-target import 65000:50001 evpn
+vpc domain 10
+  peer-switch
+  role priority 2
+  peer-keepalive destination 10.20.0.0 source 10.20.0.1 vrf default
+  delay restore 150
+  peer-gateway
+  ipv6 nd synchronize
+  ip arp synchronize
+interface loopback0
+  description Router-ID and OSPF source
+  ip address 10.0.0.22/32
+  ip router ospf UNDERLAY area 0.0.0.0
+interface loopback1
+  description VTEP NVE source
+  ip address 10.0.1.22/32
+  ip address 10.0.1.100/32 secondary
+  ip router ospf UNDERLAY area 0.0.0.0
+interface Vlan10
+  description Tenant-A VLAN 10 anycast gateway
+  no shutdown
+  vrf member Tenant-A
+  ip address 10.100.10.1/24
+  fabric forwarding mode anycast-gateway
+interface Vlan20
+  description Tenant-A VLAN 20 anycast gateway
+  no shutdown
+  vrf member Tenant-A
+  ip address 10.100.20.1/24
+  fabric forwarding mode anycast-gateway
+interface Vlan50
+  description Tenant-A VLAN 50 anycast gateway (L2Out)
+  no shutdown
+  vrf member Tenant-A
+  ip address 10.100.50.1/24
+  fabric forwarding mode anycast-gateway
+interface Vlan30
+  description Tenant-B VLAN 30 anycast gateway
+  no shutdown
+  vrf member Tenant-B
+  ip address 10.200.10.1/24
+  fabric forwarding mode anycast-gateway
+interface Vlan40
+  description Tenant-B VLAN 40 anycast gateway
+  no shutdown
+  vrf member Tenant-B
+  ip address 10.200.20.1/24
+  fabric forwarding mode anycast-gateway
+interface Vlan99
+  description L3VNI carrier for Tenant-A
+  no shutdown
+  vrf member Tenant-A
+  ip forward
+  no ip redirects
+interface Vlan98
+  description L3VNI carrier for Tenant-B
+  no shutdown
+  vrf member Tenant-B
+  ip forward
+  no ip redirects
+interface port-channel100
+  description vPC peer-link
+  switchport
+  switchport mode trunk
+  switchport trunk allowed vlan 1,10,20,30,40,50,98,99
+  spanning-tree port type network
+  vpc peer-link
+interface Ethernet1/4
+  description vPC peer-link member
+  switchport
+  switchport mode trunk
+  switchport trunk allowed vlan 1,10,20,30,40,50,98,99
+  channel-group 100 mode active
+  no shutdown
+interface Ethernet1/5
+  description vPC peer-keepalive link
+  no switchport
+  mtu 1500
+  no shutdown
+  ip address 10.20.0.1/31
+interface Ethernet1/1
+  description to spine1 Eth1/2
+  no switchport
+  mtu 9216
+  no shutdown
+  ip address 10.10.2.1/31
+  ip ospf network point-to-point
+  ip router ospf UNDERLAY area 0.0.0.0
+interface Ethernet1/2
+  description to spine2 Eth1/2
+  no switchport
+  mtu 9216
+  no shutdown
+  ip address 10.10.4.1/31
+  ip ospf network point-to-point
+  ip router ospf UNDERLAY area 0.0.0.0
+interface Ethernet1/3
+  description to host2 (VLAN 30)
+  switchport
+  switchport mode access
+  switchport access vlan 30
+  no shutdown
+interface Ethernet1/6
+  description to host1 bond (vPC 10 member, second leg)
+  switchport
+  switchport mode trunk
+  switchport trunk native vlan 10
+  switchport trunk allowed vlan 10
+  channel-group 10 mode active
+  no shutdown
+interface port-channel10
+  description host1 bond - vPC 10
+  switchport
+  switchport mode trunk
+  switchport trunk native vlan 10
+  switchport trunk allowed vlan 10
+  spanning-tree port type edge trunk
+  mtu 9216
+  vpc terminal length 0
 terminal dont-ask
 configure terminal
 hostname spine1
@@ -525,6 +525,12 @@ http://www.gnu.org/licenses/lgpl.html
 *  purposes is expressly prohibited except as otherwise authorized by     *
 *  Cisco in writing.                                                      *
 ***************************************************************************
+leaf1# terminal length 0
+leaf1# terminal dont-ask
+ Ethernet1/7
+  desleaf1# configure terminal
+Enter configuration commands, one per line. End with CNTL/Z.
+leaf1(config)# hostname leaf1
 Cisco NX-OS Software
 Copyright (c) 2002-2026, Cisco Systems, Inc. All rights reserved.
 Nexus 9000v software ("Nexus 9000v Software") and related documentation,
@@ -552,403 +558,407 @@ http://www.gnu.org/licenses/lgpl.html
 *  purposes is expressly prohibited except as otherwise authorized by     *
 *  Cisco in writing.                                                      *
 ***************************************************************************
-leaf1# terminal length 0
-leaf1# terminal dont-ask
-leaf2# terminal length 0
-leaf1# configure terminal
-cription L3Out to eEnter configuration commands, one per line. End with CNTL/Z.
-leaf1(config)# hostname leaf1
-outer (AS 65spine1# terminal length 0
+spine1# terminal length 0
 spine2# terminal length 0
-leaf2# terminal dont-ask
-  description VXLAleaf2# configure terminal
-t
- Enter configuration commands, one per line. End with CNTL/Z.
-leaf2(config)# hostname leaf2
-n
-  spine1# terminal dont-ask
+spine1# terminal dont-ask
 spine1# configure terminal
+spine2# terminal dont-ask
 Enter configuration commands, one per line. End with CNTL/Z.
 spine1(config)# hostname spine1
-spine2# terminal dont-ask
 spine2# configure terminal
 Enter configuration commands, one per line. End with CNTL/Z.
 spine2(config)# hostname spine2
-leaf1(config)# feature ospf
-spine1(config)# feature ospf
-leaf1(config)# feature bgp
-spine1(config)# feature bgp
-leaf1(config)# feature nv overlay
- vrf membeleaf1(config)# nv overlay evpn
-spine1(config)# feature nv overlay
-leaf2(config)# feature ospf
-spine1(config)# nv overlay evpn
-leaf1(config)# feature interface-vlan
-2.0/31
-  leaf1(config)# feature vn-segment-vlan-based
-spine1(config)# interface loopback0
-leaf1(config)# feature vpc
-spine2(config)# feature ospf
-leaf2(config)# feature bgp
-lity protocoleaf1(config)# feature lacp
-cription VXLleaf2(config)# feature nv overlay
-leaf1(config)# fabric forwarding anycast-gateway-mac 0000.2222.3333
-spine2(config)# feature bgp
-leaf2(config)# nv overlay evpn
-leaf1(config)# route-map ALL_ROUTES permit 10
-cespine1(config-if)#   description Router-ID and OSPF source
-leaf2(config)# feature interface-vlan
-spine2(config)# feature nv overlay
-leaf2(config)# feature vn-segment-vlan-based
-bleaf1(config-route-map)# vlan 10
-acspine2(config)# nv overlay evpn
-leaf2(config)# feature vpc
-  member leaf2(config)# feature lacp
-  spine2(config)# interface loopback0
-leaf2(config)# fabric forwarding anycast-gateway-mac 0000.2222.3333
-leaf2(config)# route-map ALL_ROUTES permit 10
-ocospine1(config-if)#   ip address 10.0.0.11/32
-leaf2(config-route-map)# vlan 10
-spine2(config-if)#   description Router-ID and OSPF source
-leaf1(config-vlan)#   name TenantA-Web
-k1
-  member vni 100spine1(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
-leaf1(config-vlan)#   vn-segment 10010
+leaf2# terminal length 0
 10
-    ingress-replleaf1(config-vlan)# vlan 20
+interface nve1
+leaf2# terminal dont-ask
+LAleaf2# configure terminal
+Enter configuration commands, one per line. End with CNTL/Z.
+leaf2(config)# hostname leaf2
+leaf1(config)# feature ospf
+anleaf1(config)# feature bgp
+spine2(config)# feature ospf
+spine1(config)# feature ospf
+leaf1(config)# feature nv overlay
+leaf1(config)# nv overlay evpn
+p spine2(config)# feature bgp
+spine1(config)# feature bgp
+leaf1(config)# feature interface-vlan
+address 192.0.2.0/31
+  leaf1(config)# feature vn-segment-vlan-based
+aspine2(config)# feature nv overlay
+spine1(config)# feature nv overlay
+leaf1(config)# feature vpc
+ce nve1
+  despine2(config)# nv overlay evpn
+leaf2(config)# feature ospf
+host-reachabileaf1(config)# feature lacp
+ion VXLspine1(config)# nv overlay evpn
+leaf1(config)# fabric forwarding anycast-gateway-mac 0000.2222.3333
+AN tunnel endpoint
+  no shutdown
+  host-reachability spine2(config)# interface loopback0
+spine1(config)# interface loopback0
+leaf1(config)# route-map ALL_ROUTES permit 10
+faceleaf2(config)# feature bgp
+leaf2(config)# feature nv overlay
+eleaf1(config-route-map)# vlan 10
+ loopbacspine2(config-if)#   description Router-ID and OSPF source
+leaf2(config)# nv overlay evpn
+spine1(config-if)#   description Router-ID and OSPF source
+leaf2(config)# feature interface-vlan
+  member vni 10010
+    leaf2(config)# feature vn-segment-vlan-based
+leaf2(config)# feature vpc
 spine2(config-if)#   ip address 10.0.0.12/32
-spine1(config-if)# interface Ethernet1/1
-Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
+leaf2(config)# feature lacp
+020
+   leaf2(config)# fabric forwarding anycast-gateway-mac 0000.2222.3333
+30
+spine1(config-if)#   ip address 10.0.0.11/32
+leaf1(config-vlan)#   name TenantA-Web
+00leaf2(config)# route-map ALL_ROUTES permit 10
 spine2(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
-leaf2(config-vlan)#   name TenantA-Web
-leaf2(config-vlan)#   vn-segment 10010
-leaf2(config-vlan)# vlan 20
-n protoleaf1(config-vlan)#   name TenantA-App
+leaf1(config-vlan)#   vn-segment 10010
+leaf1(config-vlan)# vlan 20
+ication leaf2(config-route-map)# vlan 10
+l bgp
+  spine1(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
 spine2(config-if)# interface Ethernet1/1
+Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
+spine1(config-if)# interface Ethernet1/1
+leaf1(config-vlan)#   name TenantA-App
+  membleaf2(config-vlan)#   name TenantA-Web
 leaf1(config-vlan)#   vn-segment 10020
-leaf1(config-vlan)# vlan 30
-gress-reWarning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
+er vni 10020
+    inleaf1(config-vlan)# vlan 30
+ress-releaf2(config-vlan)#   vn-segment 10010
+catileaf2(config-vlan)# vlan 20
+on protospine2(config-if)#   description to leaf1 Eth1/2
+Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
 spine1(config-if)#   description to leaf1 Eth1/1
+Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
 leaf2(config-vlan)#   name TenantA-App
-Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
-leaf2(config-vlan)#   vn-segment 10020
-leaf2(config-vlan)# vlan 30
--replicaspine2(config-if)#   description to leaf1 Eth1/2
 leaf1(config-vlan)#   name TenantB-Web
-plication protocol spine1(config-if)#   no switchport
-leaf1(config-vlan)#   vn-segment 10030
-Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
-leaf1(config-vlan)# vlan 40
+leaf2(config-vlan)#   vn-segment 10020
+i 10050
+    ingressleaf1(config-vlan)#   vn-segment 10030
+bgp
+  member vni 10leaf2(config-vlan)# vlan 30
+-replicaleaf1(config-vlan)# vlan 40
 spine2(config-if)#   no switchport
+spine1(config-if)#   no switchport
+Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
+Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
 leaf2(config-vlan)#   name TenantB-Web
+tion protocol bgp
+ leaf1(config-vlan)#   name TenantB-App
+onspine2(config-if)#   mtu 9216
+spine1(config-if)#   mtu 9216
+leaf1(config-vlan)#   vn-segment 10040
+ protocol bgp
+  memleaf2(config-vlan)#   vn-segment 10030
+ni 50001 aleaf1(config-vlan)# vlan 50
+ber vni leaf2(config-vlan)# vlan 40
+ssociateWarning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
 Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
-leaf2(config-vlan)#   vn-segment 10030
- aleaf2(config-vlan)# vlan 40
-ssociatespine1(config-if)#   mtu 9216
-leaf1(config-vlan)#   name TenantB-App
-onleaf1(config-vlan)#   vn-segment 10040
-spine2(config-if)#   mtu 9216
-leaf1(config-vlan)# vlan 50
-er vni Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
 spine1(config-if)#   no shutdown
+spine2(config-if)#   no shutdown
 leaf2(config-vlan)#   name TenantB-App
-Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
-leaf2(config-vlan)#   vn-segment 10040
-rf
-leaf2(config-vlan)# vlan 50
-ter ospine2(config-if)#   no shutdown
-leaf1(config-vlan)#   name TenantA-L2Out
+5leaf1(config-vlan)#   name TenantA-L2Out
 10040
-    ingress-repWarning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
-spine1(config-if)#   ip address 10.10.1.0/31
-leaf1(config-vlan)#   vn-segment 10050
- bleaf1(config-vlan)# vlan 99
+    ingress-repleaf2(config-vlan)#   vn-segment 10040
+leaf2(config-vlan)# vlan 50
+outer oleaf1(config-vlan)#   vn-segment 10050
+leaf1(config-vlan)# vlan 99
 gp
-  memspine2(config-if)#   ip address 10.10.3.0/31
-leaf2(config-vlan)#   name TenantA-L2Out
+  memspine1(config-if)#   ip address 10.10.1.0/31
+spine2(config-if)#   ip address 10.10.3.0/31
+Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
+Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
 spine1(config-if)#   ip ospf network point-to-point
-leaf2(config-vlan)#   vn-segment 10050
--id 10.0.0.22
-routeleaf2(config-vlan)# vlan 99
-Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
 spine2(config-if)#   ip ospf network point-to-point
-spine1(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
-Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
-leaf1(config-vlan)#   name L3VNI-TenantA
-spine2(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
+leaf2(config-vlan)#   name TenantA-L2Out
+leaf2(config-vlan)#   vn-segment 10050
+10.0.0.22
+routeleaf1(config-vlan)#   name L3VNI-TenantA
+leaf2(config-vlan)# vlan 99
+r bgp 65spine1(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
 leaf1(config-vlan)#   vn-segment 50001
 ress-replication prleaf1(config-vlan)# vlan 98
+tocol bspine2(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
+Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
 spine1(config-if)# interface Ethernet1/2
+Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
+spine2(config-if)# interface Ethernet1/2
 leaf2(config-vlan)#   name L3VNI-TenantA
-.0.spine2(config-if)# interface Ethernet1/2
-leaf2(config-vlan)#   vn-segment 50001
-leaf2(config-vlan)# vlan 98
-ly l2vpnWarning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
-spine1(config-if)#   description to leaf2 Eth1/1
-spine2(config-if)#   description to leaf2 Eth1/2
-Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
+er-id 10.0.leaf2(config-vlan)#   vn-segment 50001
 leaf1(config-vlan)#   name L3VNI-TenantB
-leaf1(config-vlan)#   vn-segment 50002
- associate-vrf
-  meleaf1(config-vlan)# vrf context Tenant-A
-leaf2(config-vlan)#   name L3VNI-TenantB
+gp
+  member vni 50001spine1(config-if)#   description to leaf2 Eth1/1
+leaf2(config-vlan)# vlan 98
+y l2vpnleaf1(config-vlan)#   vn-segment 50002
+ mespine2(config-if)#   description to leaf2 Eth1/2
+leaf1(config-vlan)# vrf context Tenant-A
+mber vni 50002 associWarning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
 spine1(config-if)#   no switchport
-leaf2(config-vlan)#   vn-segment 50002
-leaf2(config-vlan)# vrf context Tenant-A
+Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
+leaf2(config-vlan)#   name L3VNI-TenantB
 spine2(config-if)#   no switchport
-Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
-Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
 leaf1(config-vrf)#   vni 50001
-spine1(config-if)#   mtu 9216
+routleaf2(config-vlan)#   vn-segment 50002
+ip
+  neighbor 10.0.leaf2(config-vlan)# vrf context Tenant-A
 leaf1(config-vrf)#   rd auto
-spine2(config-if)#   mtu 9216
-leaf2(config-vrf)#   vni 50001
+er ospf UNleaf1(config-vrf)#   address-family ipv4 unicast
+0.21
+rspine1(config-if)#   mtu 9216
+Warning: Enable double-wide arp-ether tcam carving if igmp snooping/Hsrp over vxlan is enabled. Ignore if tcam carving is already configured.
+leaf1(config-vrf-af-ipv4)#     route-target both auto
+-idspine2(config-if)#   mtu 9216
+leaf1(config-vrf-af-ipv4)#     route-target both auto evpn
+vpleaf2(config-vrf)#   vni 50001
 000
-    updaleaf2(config-vrf)#   rd auto
-leaf1(config-vrf)#   address-family ipv4 unicast
-0.0.0.21
-rleaf2(config-vrf)#   address-family ipv4 unicast
-lleaf1(config-vrf-af-ipv4)#     route-target both auto
-er-idspine1(config-if)#   no shutdown
-leaf2(config-vrf-af-ipv4)#     route-target both auto
-munspine2(config-if)#   no shutdown
-leaf1(config-vrf-af-ipv4)#     route-target both auto evpn
- 10.0.0.21
-  address-family l2vpleaf2(config-vrf-af-ipv4)#     route-target both auto evpn
-nity extendeleaf1(config-vrf-af-ipv4)#     route-target import 65000:50002
-n evpn
-    advertise-pip
-  neighbor leaf2(config-vrf-af-ipv4)#     route-target import 65000:50002
-sleaf1(config-vrf-af-ipv4)#     route-target import 65000:50002 evpn
-te-spine1(config-if)#   ip address 10.10.2.0/31
-spine2(config-if)#   ip address 10.10.4.0/31
-leaf2(config-vrf-af-ipv4)#     route-target import 65000:50002 evpn
-   adleaf2(config-vrf-af-ipv4)# vrf context Tenant-B
-leaf1(config-vrf-af-ipv4)# vrf context Tenant-B
-
-    spine1(config-if)#   ip ospf network point-to-point
-spine2(config-if)#   ip ospf network point-to-point
-leaf2(config-vrf)#   vni 50002
- senleaf1(config-vrf)#   vni 50002
-address-famileaf2(config-vrf)#   rd auto
-mmunitleaf1(config-vrf)#   rd auto
-espine1(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
-spine2(config-if)#   leaf1(config-vrf)#   address-family ipv4 unicast
- ip router ospf UNDERLAY area 0.0.0.0
+    updaleaf1(config-vrf-af-ipv4)#     route-target import 65000:50002
+bor leaf2(config-vrf)#   rdspine1(config-if)#   no shutdown
+ auto
+urce leaf1(config-vrf-af-ipv4)#     route-target import 65000:50002 evpn
 leaf2(config-vrf)#   address-family ipv4 unicast
-tendeleaf1(config-vrf-af-ipv4)#     route-target both auto
- leaf2(config-vrf-af-ipv4)#     route-target both auto
- addresspine1(config-if)# router ospf UNDERLAY
-spine2(config-if)# router ospf UNDERLAY
-leaf2(config-vrf-af-ipv4)#     route-target both auto evpn
+leaf1(config-vrf-af-ipv4)# vrf context Tenant-B
+ack0
+    spine2(config-if)#   no shutdown
+leaf2(config-vrf-af-ipv4)#     route-target both auto
+mmunleaf2(config-vrf-af-ipv4)#     route-target both auto evpn
+ndeleaf1(config-vrf)#   vni 50002
+spine1(config-if)#   ip address 10.10.2.0/31
+leaf1(config-vrf)#   rd auto
+ly l2vpn eleaf2(config-vrf-af-ipv4)#     route-target import 65000:50002
+spine2(config-if)#   ip address 10.10.4.0/31
+leaf1(config-vrf)#   address-family ipv4 unicast
+leaf2(config-vrf-af-ipv4)#     route-target import 65000:50002 evpn
+spine1(config-if)#   ip ospf network point-to-point
+leaf2(config-vrf-af-ipv4)# vrf context Tenant-B
+vpn evleaf1(config-vrf-af-ipv4)#     route-target both auto
+spine2(config-if)#   ip ospf network point-to-point
+spine1(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
+leaf2(config-vrf)#   vni 50002
+    senspine2(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
 leaf1(config-vrf-af-ipv4)#     route-target both auto evpn
-neighbor 10.0.0.12
-    remote-asspine1(config-router)#   router-id 10.0.0.11
-spine2(config-router)#   router-id 10.0.0.12
-spine1(config-router)# router bgp 65000
-leaf2(config-vrf-af-ipv4)#     route-target import 65000:50001
-rtise l2vpn evpn
-      redistribute leaf1(config-vrf-af-ipv4)#     route-target import 65000:50001
+e-asleaf2(config-vrf)#   rd auto
+itspine1(config-if)# router ospf UNDERLAY
+leaf2(config-vrf)#   address-family ipv4 unicast
 spine1(config-router)#   router-id 10.0.0.11
+spine2(config-if)# router ospf UNDERLAY
+leaf2(config-vrf-af-ipv4)#     route-target both auto
+spine1(config-router)# router bgp 65000
+leaf1(config-vrf-af-ipv4)#     route-target import 65000:50001
+ 65000
+    update-source loopback0
+ spine2(config-router)#   router-id 10.0.0.12
+leaf2(config-vrf-af-ipv4)#     route-target both auto evpn
+s-family ipv4 unicast
+      advespine1(config-router)#   router-id 10.0.0.11
 spine2(config-router)# router bgp 65000
-leaf2(config-vrf-af-ipv4)#     route-target import 65000:50001 evpn
 leaf1(config-vrf-af-ipv4)#     route-target import 65000:50001 evpn
+evpn
+      send-cleaf2(config-vrf-af-ipv4)#     route-target import 65000:50001
 spine1(config-router)#   address-family l2vpn evpn
 spine2(config-router)#   router-id 10.0.0.12
-leaf2(config-vrf-af-ipv4)# vpc domain 10
-bgp 2
 leaf1(config-vrf-af-ipv4)# vpc domain 10
-
-     spine1(config-router-af)#     retain route-target all
-spine2(config-router)#   address-family l2vpn evpn
-leaf2(config-vpc-domain)#   peer-switch
-spine1(config-router-af)#   neighbor 10.0.0.21
+ommunity
+     spine2(config-router)#   address-family l2vpn evpn
+spine1(config-router-af)#     retain route-target all
+leaf2(config-vrf-af-ipv4)#     route-target import 65000:50001 evpn
+OUTES
+      maximumspine1(config-router-af)#   neighbor 10.0.0.21
 leaf1(config-vpc-domain)#   peer-switch
--communitspine2(config-router-af)#     retain route-target all
-leaf2(config-vpc-domain)#   role priority 2
-
-    address-familleaf1(config-vpc-domain)#   role priority 1
-vrf Tleaf2(config-vpc-domain)#   peer-keepalive destination 10.20.0.0 source 10.20.0. 1 vrf default
-spine1(config-router-neighbor)#     remote-as 65000
+spine2(config-router-af)#     retain route-target all
+leaf2(config-vrf-af-ipv4)# vpc domain 10
+leaf1(config-vpc-domain)#   role priority 1
+y extended
+  vrf Tspine1(config-router-neighbor)#     remote-as 65000
 leaf1(config-vpc-domain)#   peer-keepalive destination 10.20.0.1 source 10.20.0. 0 vrf default
-  advertise l2vpn evpn
- leaf2(config-vpc-domain)#   delay restore 150
- ALL_ROUTESspine2(config-router-af)#   neighbor 10.0.0.21
-leaf1(config-vpc-domain)#   delay restore 150
- redistribute dileaf2(config-vpc-domain)#   peer-gateway
-
-      maximum-leaf2(config-vpc-domain)#   ipv6 nd synchronize
-spine1(config-router-neighbor)#     update-source loopback0
-spine2(config-router-neighbor)#     remote-as 65000
-leaf2(config-vpc-domain)#   ip arp synchronize
-i 10010 l2
-    rd autleaf1(config-vpc-domain)#   peer-gateway
-rect route-map spine1(config-router-neighbor)#     address-family l2vpn evpn
+ leaf1(config-vpc-domain)#   delay restore 150
+bute dispine2(config-router-af)#   neighbor 10.0.0.21
+leaf2(config-vpc-domain)#   peer-switch
+t-Bspine1(config-router-neighbor)#     update-source loopback0
+leaf1(config-vpc-domain)#   peer-gateway
+leaf2(config-vpc-domain)#   role priority 2
+address-familleaf2(config-vpc-domain)#   peer-keepalive destination 10.20.0.0 source 10.20.0. 1 vrf default
 leaf1(config-vpc-domain)#   ipv6 nd synchronize
-    maximleaf2(config-vpc-domain)# interface loopback0
- ispine2(config-router-neighbor)#     update-source loopback0
-leaf1(config-vpc-domain)#   ip arp synchronize
-spine1(config-router-neighbor-af)#       send-community
-leaf1(config-vpc-domain)# interface loopback0
-spine2(config-router-neighbor)#     address-family l2vpn evpn
-spine2(config-router-neighbor-af)#       send-community
-leaf2(config-if)#   description Router-ID and OSPF source
-xport auto
-spine1(config-router-neighbor-af)#       send-community extended
-spine2(config-router-neighbor-af)#       send-community extended
-spine1(config-router-neighbor-af)#       route-reflector-client
-leaf1(config-if)#   description Router-ID and OSPF source
-spine2(config-router-neighbor-af)#       route-reflector-client
-leaf2(config-if)#   ip address 10.0.0.22/32
-  vni 10020 l2
-    rd autospine1(config-router-neighbor-af)#   neighbor 10.0.0.22
-spine1(config-router-neighbor)#     remote-as 65000
-spine2(config-router-neighbor-af)#   neighbor 10.0.0.22
-leaf2(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
-spine1(config-router-neighbor)#     update-source loopback0
+imspine1(config-router-neighbor)#     address-family l2vpn evpn
 spine2(config-router-neighbor)#     remote-as 65000
-leaf1(config-if)#   ip address 10.0.0.21/32
-
-    spine1(config-router-neighbor)#     address-family l2vpn evpn
+leaf2(config-vpc-domain)#   delay restore 150
+leaf1(config-vpc-domain)#   ip arp synchronize
+gp 2
+    nleaf2(config-vpc-domain)#   peer-gateway
+um-spine1(config-router-neighbor-af)#       send-community
 spine2(config-router-neighbor)#     update-source loopback0
-leaf2(config-if)# interface loopback1
-o
-spine1(config-router-neighbor-af)#       send-community
+leaf2(config-vpc-domain)#   ipv6 nd synchronize
+leaf1(config-vpc-domain)# interface loopback0
+2.0.2.1
+  leaf2(config-vpc-domain)#   ip arp synchronize
+i 10010 l2
+    rd autspine1(config-router-neighbor-af)#       send-community extended
 spine2(config-router-neighbor)#     address-family l2vpn evpn
-leaf1(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
-   sspine1(config-router-neighbor-af)#       send-community extended
+leaf2(config-vpc-domain)# interface loopback0
+get ispine1(config-router-neighbor-af)#       route-reflector-client
 spine2(config-router-neighbor-af)#       send-community
+leaf1(config-if)#   description Router-ID and OSPF source
+spine1(config-router-neighbor-af)#   neighbor 10.0.0.22
 spine2(config-router-neighbor-af)#       send-community extended
+spine1(config-router-neighbor)#     remote-as 65000
+leaf2(config-if)#   description Router-ID and OSPF source
+spine1(config-router-neighbor)#     update-source loopback0
+spine2(config-router-neighbor-af)#       route-reflector-client
+spine1(config-router-neighbor)#     address-family l2vpn evpn
+leaf1(config-if)#   ip address 10.0.0.21/32
+  spine2(config-router-neighbor-af)#   neighbor 10.0.0.22
+leaf2(config-if)#   ip address 10.0.0.22/32
+spine1(config-router-neighbor-af)#       send-community
+spine2(config-router-neighbor)#     remote-as 65000
+leaf1(config-if)#   ip router ospf UNDERLAY area 0.0.0.spine2(config-router-neighbor)#     update-source loopback0
+0
+spine1(config-router-neighbor-af)#       send-community extended
+leaf2(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
+spine2(config-router-neighbor)#     address-family l2vpn evpn
+spine1(config-router-neighbor-af)#       route-reflector-client
+spine2(config-router-neighbor-af)#       send-community
 leaf1(config-if)# interface loopback1
-end-community
-      spine1(config-router-neighbor-af)#       route-reflector-client
-leaf2(config-if)#   description VTEP NVE source
+  spine1(config-router-neighbor-af)# end
+spine2(config-router-neighbor-af)#       send-community extended
+leaf2(config-if)# interface loopback1
+auto
+spine1# copy running-config startup-config
 spine2(config-router-neighbor-af)#       route-reflector-client
 spine2(config-router-neighbor-af)# end
-spine2# copy running-config startup-config
-spine1(config-router-neighbor-af)# end
-spine1# copy running-config startup-config
-leaf2(config-if)#   ip address 10.0.1.22/32
- route-target import auto
 leaf1(config-if)#   description VTEP NVE source
-nity extended
-  vrleaf2(config-if)#   ip address 10.0.1.100/32 secondary
-  vni 10leaf1(config-if)#   ip address 10.0.1.21/32
-ddress-famleaf2(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
-et impleaf1(config-if)#   ip address 10.0.1.100/32 secondary
-ily ipv4 unicast
-      advertise l2vpleaf2(config-if)# interface Vlan10
-tleaf1(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
+rleaf2(config-if)#   description VTEP NVE source
+ spine2# copy running-config startup-config
+leaf1(config-if)#   ip address 10.0.1.21/32
+leaf2(config-if)#   ip address 10.0.1.22/32
+leaf1(config-if)#   ip address 10.0.1.100/32 secondary
+leaf2(config-if)#   ip address 10.0.1.100/32 secondary
+leaf1(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
+leaf2(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
 leaf1(config-if)# interface Vlan10
- leaf2(config-if)#   description Tenant-A VLAN 10 anycast gateway
- l2
-    rd autoleaf2(config-if)#   no shutdown
-ute-tarleaf1(config-if)#   description Tenant-A VLAN 10 anycast gateway
-2
-  leaf2(config-if)#   vrf member Tenant-A
-    roleaf1(config-if)#   no shutdown
-leaf2(config-if)#   ip address 10.100.10.1/24
-leaf1(config-if)#   vrf member Tenant-A
-route-target import auleaf2(config-if)#   fabric forwarding mode anycast-gateway
-leaf1(config-if)#   ip address 10.100.10.1/24
-leaf2(config-if)# interface Vlan20
-leaf1(config-if)#   fabric forwarding mode anycast-gateway
- route-leaf1(config-if)# interface Vlan20
-[#                                       ]   1%[#                                       ]   1%[#                                       ]   2%leaf2(config-if)#   description Tenant-A VLAN 20 anycast gateway
-[#                                       ]   2%[##                                      ]   3%leaf1(config-if)#   description Tenant-A VLAN 20 anycast gateway
-2
- leaf2(config-if)#   no shutdown
+ES
+  leaf2(config-if)# interface Vlan10
+leaf1(config-if)#   description Tenant-A VLAN 10 anycast gateway
+0010 l2
+  leaf2(config-if)#   description Tenant-A VLAN 10 anycast gateway
 leaf1(config-if)#   no shutdown
-[##                                      ]   4%[##                                      ]   3%leaf1(config-if)#   vrf member Tenant-A
- route-target import aleaf1(config-if)#   ip address 10.100.20.1/24
-rget export [##                                      ]   4%leaf2(config-if)#   vrf member Tenant-A
-leaf1(config-if)#   fabric forwarding mode anycast-gateway
-auto
-  vni 10040 l2
-    rd auto
-    routeleaf2(config-if)#   ip address 10.100.20.1/24
-[###                                     ]   5%[###                                     ]   5%[###                                     ]   6%leaf2(config-if)#   fabric forwarding mode anycast-gateway
-leaf1(config-if)# interface Vlan50
--target import au[###                                     ]   6%[###                                     ]   7%[###                                     ]   7%leaf2(config-if)# interface Vlan50
-[####                                    ]   8%leaf1(config-if)#   description Tenant-A VLAN 50 anycast gateway (L2Out)
-[####                                    ]   9%[####                                    ]   8%[#####                                   ]  10%leaf1(config-if)#   no shutdown
-te-leaf2(config-if)#   description Tenant-A VLAN 50 anycast gateway (L2Out)
-[####                                    ]   9%leaf2(config-if)#   no shutdown
+leaf2(config-if)#   no shutdown
 leaf1(config-if)#   vrf member Tenant-A
-[#####                                   ]  11%[#####                                   ]  10%leaf2(config-if)#   vrf member Tenant-A
-leaf1(config-if)#   ip address 10.100.50.1/24
-auto
-en[#####                                   ]  12%[#####                                   ]  11%leaf2(config-if)#   ip address 10.100.50.1/24
+route-target import auleaf2(config-if)#   vrf member Tenant-A
+leaf1(config-if)#   ip address 10.100.10.1/24
+ aleaf2(config-if)#   ip address 10.100.10.1/24
 leaf1(config-if)#   fabric forwarding mode anycast-gateway
-d
-copy running-config startup-config
-exit[######                                  ]  13%[#####                                   ]  12%leaf1(config-if)# interface Vlan30
+uto
+  vni 10020 l2
+    rd auto
+    route-leaf2(config-if)#   fabric forwarding mode anycast-gateway
+xit
+leaf1(config-if)# interface Vlan20
+target import aut[#                                       ]   1%leaf2(config-if)# interface Vlan20
+[#                                       ]   1%leaf1(config-if)#   description Tenant-A VLAN 20 anycast gateway
+
+  vni 10030 l2
+ [#                                       ]   2%leaf2(config-if)#   description Tenant-A VLAN 20 anycast gateway
+[#                                       ]   2%leaf1(config-if)#   no shutdown
+   rd auto
+   [##                                      ]   3%leaf1(config-if)#   vrf member Tenant-A
+ route-target import aleaf2(config-if)#   no shutdown
+[##                                      ]   3%leaf1(config-if)#   ip address 10.100.20.1/24
+ [##                                      ]   4%leaf2(config-if)#   vrf member Tenant-A
+leaf2(config-if)#   ip address 10.100.20.1/24
+[##                                      ]   4%leaf1(config-if)#   fabric forwarding mode anycast-gateway
+   route[###                                     ]   5%leaf1(config-if)# interface Vlan50
 leaf2(config-if)#   fabric forwarding mode anycast-gateway
-[######                                  ]  14%[######                                  ]  13%leaf2(config-if)# interface Vlan30
-[#######                                 ]  15%[######                                  ]  14%leaf1(config-if)#   description Tenant-B VLAN 30 anycast gateway
-[#######                                 ]  16%[#######                                 ]  15%leaf1(config-if)#   no shutdown
-leaf2(config-if)#   description Tenant-B VLAN 30 anycast gateway
-[#######                                 ]  17%[#######                                 ]  16%leaf2(config-if)#   no shutdown
-leaf1(config-if)#   vrf member Tenant-B
-leaf1(config-if)#   ip address 10.200.10.1/24
-[########                                ]  18%[#######                                 ]  17%leaf2(config-if)#   vrf member Tenant-B
+[###                                     ]   5%leaf2(config-if)# interface Vlan50
+[###                                     ]   6%[###                                     ]   6%leaf1(config-if)#   description Tenant-A VLAN 50 anycast gateway (L2Out)
+to
+    route-target export auto
+  vni 10050 l2
+    rd a[###                                     ]   7%[###                                     ]   7%leaf1(config-if)#   no shutdown
+uto
+    route-leaf2(config-if)#   description Tenant-A VLAN 50 anycast gateway (L2Out)
+[####                                    ]   8%[####                                    ]   8%leaf1(config-if)#   vrf member Tenant-A
+  leaf2(config-if)#   no shutdown
+[####                                    ]   9%[####                                    ]   9%leaf1(config-if)#   ip address 10.100.50.1/24
+ route-target export auto
+enleaf2(config-if)#   vrf member Tenant-A
+[#####                                   ]  10%[#####                                   ]  10%leaf1(config-if)#   fabric forwarding mode anycast-gateway
+leaf2(config-if)#   ip address 10.100.50.1/24
+[#####                                   ]  11%[#####                                   ]  11%leaf1(config-if)# interface Vlan30
+
+leaf2(config-if)#   fabric forwarding mode anycast-gateway
+[#####                                   ]  12%[#####                                   ]  12%[######                                  ]  13%leaf2(config-if)# interface Vlan30
+[######                                  ]  13%leaf1(config-if)#   description Tenant-B VLAN 30 anycast gateway
+[######                                  ]  14%leaf1(config-if)#   no shutdown
+[######                                  ]  14%leaf2(config-if)#   description Tenant-B VLAN 30 anycast gateway
+[#######                                 ]  15%leaf2(config-if)#   no shutdown
+[#######                                 ]  15%leaf1(config-if)#   vrf member Tenant-B
+[#######                                 ]  16%leaf1(config-if)#   ip address 10.200.10.1/24
+[#######                                 ]  16%leaf2(config-if)#   vrf member Tenant-B
 leaf1(config-if)#   fabric forwarding mode anycast-gateway
 leaf2(config-if)#   ip address 10.200.10.1/24
-[########                                ]  18%[########                                ]  19%leaf1(config-if)# interface Vlan40
-leaf2(config-if)#   fabric forwarding mode anycast-gateway
-[########                                ]  19%[#########                               ]  20%leaf2(config-if)# interface Vlan40
-leaf1(config-if)#   description Tenant-B VLAN 40 anycast gateway
-[#########                               ]  21%[#########                               ]  20%leaf1(config-if)#   no shutdown
-[#########                               ]  21%[#########                               ]  22%leaf2(config-if)#   description Tenant-B VLAN 40 anycast gateway
-leaf1(config-if)#   vrf member Tenant-B
-[#########                               ]  22%[##########                              ]  23%leaf2(config-if)#   no shutdown
-leaf1(config-if)#   ip address 10.200.20.1/24
-[##########                              ]  23%[##########                              ]  24%leaf2(config-if)#   vrf member Tenant-B
+[#######                                 ]  17%[#######                                 ]  17%leaf2(config-if)#   fabric forwarding mode anycast-gateway
+leaf1(config-if)# interface Vlan40
+leaf2(config-if)# interface Vlan40
+[########                                ]  18%[########                                ]  18%[########                                ]  19%[########                                ]  19%leaf1(config-if)#   description Tenant-B VLAN 40 anycast gateway
+[#########                               ]  20%leaf1(config-if)#   no shutdown
+leaf2(config-if)#   description Tenant-B VLAN 40 anycast gateway
+[#########                               ]  20%[#########                               ]  21%leaf1(config-if)#   vrf member Tenant-B
+leaf2(config-if)#   no shutdown
+[#########                               ]  21%[#########                               ]  22%leaf1(config-if)#   ip address 10.200.20.1/24
+leaf2(config-if)#   vrf member Tenant-B
 leaf1(config-if)#   fabric forwarding mode anycast-gateway
-[##########                              ]  24%[###########                             ]  25%leaf2(config-if)#   ip address 10.200.20.1/24
-leaf1(config-if)# interface Vlan99
-[###########                             ]  25%[###########                             ]  26%leaf2(config-if)#   fabric forwarding mode anycast-gateway
-[###########                             ]  27%leaf2(config-if)# interface Vlan99
-[###########                             ]  26%leaf1(config-if)#   description L3VNI carrier for Tenant-A
-[###########                             ]  27%[############                            ]  28%leaf1(config-if)#   no shutdown
-[############                            ]  28%[############                            ]  29%leaf2(config-if)#   description L3VNI carrier for Tenant-A
+[#########                               ]  22%[##########                              ]  23%leaf2(config-if)#   ip address 10.200.20.1/24
+[##########                              ]  23%[##########                              ]  24%leaf1(config-if)# interface Vlan99
+leaf2(config-if)#   fabric forwarding mode anycast-gateway
+[##########                              ]  24%[###########                             ]  25%leaf2(config-if)# interface Vlan99
+[###########                             ]  25%[###########                             ]  26%[###########                             ]  26%leaf1(config-if)#   description L3VNI carrier for Tenant-A
+[###########                             ]  27%[###########                             ]  27%leaf2(config-if)#   description L3VNI carrier for Tenant-A
+leaf1(config-if)#   no shutdown
+[############                            ]  28%[############                            ]  28%leaf2(config-if)#   no shutdown
 leaf1(config-if)#   vrf member Tenant-A
-leaf2(config-if)#   no shutdown
-[############                            ]  29%[#############                           ]  30%leaf1(config-if)#   ip forward
+[############                            ]  29%[############                            ]  29%leaf1(config-if)#   ip forward
 leaf2(config-if)#   vrf member Tenant-A
-[#############                           ]  30%[#############                           ]  31%leaf1(config-if)#   no ip redirects
-leaf2(config-if)#   ip forward
-[#############                           ]  31%[#############                           ]  32%leaf1(config-if)# interface Vlan98
-leaf2(config-if)#   no ip redirects
-[#############                           ]  32%[##############                          ]  33%[##############                          ]  33%leaf2(config-if)# interface Vlan98
-[##############                          ]  34%leaf1(config-if)#   description L3VNI carrier for Tenant-B
-[##############                          ]  34%[###############                         ]  35%leaf1(config-if)#   no shutdown
-[###############                         ]  35%leaf2(config-if)#   description L3VNI carrier for Tenant-B
-[###############                         ]  36%[###############                         ]  36%leaf1(config-if)#   vrf member Tenant-B
-leaf2(config-if)#   no shutdown
-[###############                         ]  37%leaf1(config-if)#   ip forward
-[###############                         ]  37%leaf2(config-if)#   vrf member Tenant-B
-[################                        ]  38%leaf1(config-if)#   no ip redirects
-[################                        ]  38%leaf2(config-if)#   ip forward
-[################                        ]  39%leaf1(config-if)# interface port-channel100
-[################                        ]  39%leaf2(config-if)#   no ip redirects
-[#################                       ]  40%[#################                       ]  40%leaf2(config-if)# interface port-channel100
-[#################                       ]  41%[#################                       ]  41%leaf1(config-if)#   description vPC peer-link
-[#################                       ]  42%[#################                       ]  42%[##################                      ]  43%leaf2(config-if)#   description vPC peer-link
-leaf1(config-if)#   switchport
-[##################                      ]  43%[##################                      ]  44%leaf2(config-if)#   switchport
-[##################                      ]  44%[###################                     ]  45%[###################                     ]  45%leaf1(config-if)#   switchport mode trunk
-[###################                     ]  46%[###################                     ]  46%leaf2(config-if)#   switchport mode trunk
-leaf1(config-if)#   switchport trunk allowed vlan 1,10,20,30,40,50,98,99
-[###################                     ]  47%[###################                     ]  47%[####################                    ]  48%leaf2(config-if)#   switchport trunk allowed vlan 1,10,20,30,40,50,98,99
-leaf1(config-if)#   spanning-tree port type network
-[####################                    ]  48%[####################                    ]  49%leaf1(config-if)#   vpc peer-link
-[####################                    ]  49%leaf2(config-if)#   spanning-tree port type network
-[#####################                   ]  50%leaf1(config-if)# interface Ethernet1/4
-[#####################                   ]  50%[#####################                   ]  51%leaf2(config-if)#   vpc peer-link
-[#####################                   ]  51%leaf1(config-if)#   description vPC peer-link member
-[#####################                   ]  52%leaf2(config-if)# interface Ethernet1/4
-[#####################                   ]  52%[######################                  ]  53%leaf1(config-if)#   switchport
+[#############                           ]  30%[#############                           ]  30%leaf2(config-if)#   ip forward
+leaf1(config-if)#   no ip redirects
+[#############                           ]  31%[#############                           ]  31%leaf2(config-if)#   no ip redirects
+leaf1(config-if)# interface Vlan98
+[#############                           ]  32%[#############                           ]  32%leaf2(config-if)# interface Vlan98
+[##############                          ]  33%[##############                          ]  33%leaf1(config-if)#   description L3VNI carrier for Tenant-B
+[##############                          ]  34%[##############                          ]  34%leaf2(config-if)#   description L3VNI carrier for Tenant-B
+leaf1(config-if)#   no shutdown
+[###############                         ]  35%[###############                         ]  35%leaf2(config-if)#   no shutdown
+leaf1(config-if)#   vrf member Tenant-B
+[###############                         ]  36%[###############                         ]  36%leaf2(config-if)#   vrf member Tenant-B
+leaf1(config-if)#   ip forward
+[###############                         ]  37%[###############                         ]  37%leaf2(config-if)#   ip forward
+leaf1(config-if)#   no ip redirects
+[################                        ]  38%[################                        ]  38%leaf2(config-if)#   no ip redirects
+leaf1(config-if)# interface port-channel100
+[################                        ]  39%[################                        ]  39%leaf2(config-if)# interface port-channel100
+[#################                       ]  40%[#################                       ]  40%leaf1(config-if)#   description vPC peer-link
+[#################                       ]  41%[#################                       ]  41%leaf2(config-if)#   description vPC peer-link
+[#################                       ]  42%leaf1(config-if)#   switchport
+[#################                       ]  42%leaf2(config-if)#   switchport
+[##################                      ]  43%[##################                      ]  43%[##################                      ]  44%[##################                      ]  44%leaf1(config-if)#   switchport mode trunk
+[###################                     ]  45%leaf2(config-if)#   switchport mode trunk
+[###################                     ]  45%leaf1(config-if)#   switchport trunk allowed vlan 1,10,20,30,40,50,98,99
+[###################                     ]  46%leaf2(config-if)#   switchport trunk allowed vlan 1,10,20,30,40,50,98,99
+[###################                     ]  46%[###################                     ]  47%leaf1(config-if)#   spanning-tree port type network
+[###################                     ]  47%leaf2(config-if)#   spanning-tree port type network
+[####################                    ]  48%leaf1(config-if)#   vpc peer-link
+[####################                    ]  48%leaf2(config-if)#   vpc peer-link
+[####################                    ]  49%leaf1(config-if)# interface Ethernet1/4
+[####################                    ]  49%leaf2(config-if)# interface Ethernet1/4
+[#####################                   ]  50%[#####################                   ]  50%leaf1(config-if)#   description vPC peer-link member
+[#####################                   ]  51%leaf2(config-if)#   description vPC peer-link member
+[#####################                   ]  51%leaf1(config-if)#   switchport
                             ^
 % Incomplete command at '^' marker.
 leaf1(config-if)#   switchport mode trunk
@@ -958,8 +968,7 @@ exit[######                                  ]  13%[#####                     
                              ^
 % Invalid command at '^' marker.
 leaf1(config-if)#   channel-group 100 mode active
-leaf2(config-if)#   description vPC peer-link member
-[######################                  ]  53%[######################                  ]  54%[######################                  ]  54%[#######################                 ]  55%leaf2(config-if)#   switchport
+[#####################                   ]  52%[#####################                   ]  52%leaf2(config-if)#   switchport
                             ^
 % Incomplete command at '^' marker.
 leaf2(config-if)#   switchport mode trunk
@@ -969,57 +978,58 @@ exit[######                                  ]  13%[#####                     
                              ^
 % Invalid command at '^' marker.
 leaf2(config-if)#   channel-group 100 mode active
-[#######################                 ]  55%leaf1(config-if)#   no shutdown
-[#######################                 ]  56%[#######################                 ]  56%[#######################                 ]  57%leaf1(config-if)# interface Ethernet1/5
-[#######################                 ]  57%leaf2(config-if)#   no shutdown
-[########################                ]  58%leaf1(config-if)#   description vPC peer-keepalive link
-[########################                ]  58%[########################                ]  59%leaf2(config-if)# interface Ethernet1/5
-[########################                ]  59%leaf1(config-if)#   no switchport
-[#########################               ]  60%leaf2(config-if)#   description vPC peer-keepalive link
-[#########################               ]  60%[#########################               ]  61%[#########################               ]  61%leaf1(config-if)#   mtu 1500
-leaf2(config-if)#   no switchport
-[#########################               ]  62%[#########################               ]  62%leaf1(config-if)#   no shutdown
-[##########################              ]  63%leaf2(config-if)#   mtu 1500
-[##########################              ]  63%leaf1(config-if)#   ip address 10.20.0.0/31
-[##########################              ]  64%[##########################              ]  64%leaf2(config-if)#   no shutdown
-leaf1(config-if)# interface Ethernet1/1
-[###########################             ]  65%[###########################             ]  65%leaf2(config-if)#   ip address 10.20.0.1/31
-leaf1(config-if)#   description to spine1 Eth1/1
-[###########################             ]  66%[###########################             ]  66%leaf2(config-if)# interface Ethernet1/1
-[###########################             ]  67%[###########################             ]  67%leaf1(config-if)#   no switchport
-[############################            ]  68%leaf2(config-if)#   description to spine1 Eth1/2
-[############################            ]  68%[############################            ]  69%leaf1(config-if)#   mtu 9216
-[############################            ]  69%leaf2(config-if)#   no switchport
-[#############################           ]  70%[#############################           ]  70%leaf1(config-if)#   no shutdown
-[#############################           ]  71%leaf2(config-if)#   mtu 9216
+[######################                  ]  53%[######################                  ]  53%[######################                  ]  54%leaf1(config-if)#   no shutdown
+[######################                  ]  54%[#######################                 ]  55%leaf2(config-if)#   no shutdown
+[#######################                 ]  55%leaf1(config-if)# interface Ethernet1/5
+[#######################                 ]  56%leaf2(config-if)# interface Ethernet1/5
+[#######################                 ]  56%leaf1(config-if)#   description vPC peer-keepalive link
+[#######################                 ]  57%leaf2(config-if)#   description vPC peer-keepalive link
+[#######################                 ]  57%[########################                ]  58%leaf1(config-if)#   no switchport
+[########################                ]  58%leaf2(config-if)#   no switchport
+[########################                ]  59%[########################                ]  59%leaf1(config-if)#   mtu 1500
+[#########################               ]  60%leaf2(config-if)#   mtu 1500
+[#########################               ]  60%leaf1(config-if)#   no shutdown
+[#########################               ]  61%[#########################               ]  61%leaf2(config-if)#   no shutdown
+[#########################               ]  62%leaf1(config-if)#   ip address 10.20.0.0/31
+[#########################               ]  62%leaf1(config-if)# interface Ethernet1/1
+[##########################              ]  63%leaf2(config-if)#   ip address 10.20.0.1/31
+[##########################              ]  63%leaf2(config-if)# interface Ethernet1/1
+[##########################              ]  64%leaf1(config-if)#   description to spine1 Eth1/1
+[##########################              ]  64%leaf2(config-if)#   description to spine1 Eth1/2
+[###########################             ]  65%[###########################             ]  65%leaf1(config-if)#   no switchport
+[###########################             ]  66%[###########################             ]  66%leaf2(config-if)#   no switchport
+[###########################             ]  67%[###########################             ]  67%leaf1(config-if)#   mtu 9216
+[############################            ]  68%leaf2(config-if)#   mtu 9216
+[############################            ]  68%[############################            ]  69%leaf1(config-if)#   no shutdown
+[#############################           ]  70%[############################            ]  69%leaf2(config-if)#   no shutdown
 [#############################           ]  71%leaf1(config-if)#   ip address 10.10.1.1/31
-[#############################           ]  72%[#############################           ]  72%leaf2(config-if)#   no shutdown
+[#############################           ]  70%leaf2(config-if)#   ip address 10.10.2.1/31
 leaf1(config-if)#   ip ospf network point-to-point
-[##############################          ]  73%[##############################          ]  73%leaf1(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
-[##############################          ]  74%leaf2(config-if)#   ip address 10.10.2.1/31
-leaf1(config-if)# interface Ethernet1/2
-[##############################          ]  74%leaf2(config-if)#   ip ospf network point-to-point
-[###############################         ]  75%leaf1(config-if)#   description to spine2 Eth1/1
-[###############################         ]  75%leaf2(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
-[###############################         ]  76%[###############################         ]  76%leaf2(config-if)# interface Ethernet1/2
-leaf1(config-if)#   no switchport
-[###############################         ]  77%[###############################         ]  77%leaf2(config-if)#   description to spine2 Eth1/2
-[################################        ]  78%[################################        ]  78%leaf1(config-if)#   mtu 9216
-[################################        ]  79%leaf2(config-if)#   no switchport
-[################################        ]  79%leaf1(config-if)#   no shutdown
-[#################################       ]  80%[#################################       ]  80%leaf2(config-if)#   mtu 9216
-[#################################       ]  81%[#################################       ]  81%leaf1(config-if)#   ip address 10.10.3.1/31
-leaf2(config-if)#   no shutdown
-leaf1(config-if)#   ip ospf network point-to-point
-[#################################       ]  82%[#################################       ]  82%leaf1(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
-[##################################      ]  83%leaf2(config-if)#   ip address 10.10.4.1/31
-[##################################      ]  83%leaf1(config-if)# interface Ethernet1/3
-leaf2(config-if)#   ip ospf network point-to-point
-[##################################      ]  84%[##################################      ]  84%leaf1(config-if)#   description to host1 bond (vPC 10 member)
-leaf2(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
-[###################################     ]  85%[###################################     ]  85%leaf2(config-if)# interface Ethernet1/3
-[###################################     ]  86%leaf1(config-if)#   switchport
-[###################################     ]  86%                            ^
+[#############################           ]  72%[#############################           ]  71%leaf2(config-if)#   ip ospf network point-to-point
+leaf1(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
+[##############################          ]  73%leaf2(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
+[#############################           ]  72%leaf1(config-if)# interface Ethernet1/2
+[##############################          ]  74%leaf2(config-if)# interface Ethernet1/2
+[##############################          ]  73%leaf1(config-if)#   description to spine2 Eth1/1
+[###############################         ]  75%leaf2(config-if)#   description to spine2 Eth1/2
+[##############################          ]  74%leaf1(config-if)#   no switchport
+[###############################         ]  76%[###############################         ]  75%leaf2(config-if)#   no switchport
+[###############################         ]  77%[###############################         ]  76%leaf1(config-if)#   mtu 9216
+[################################        ]  78%[###############################         ]  77%leaf2(config-if)#   mtu 9216
+leaf1(config-if)#   no shutdown
+[################################        ]  79%[################################        ]  78%leaf2(config-if)#   no shutdown
+leaf1(config-if)#   ip address 10.10.3.1/31
+[#################################       ]  80%[################################        ]  79%[#################################       ]  81%[#################################       ]  80%leaf1(config-if)#   ip ospf network point-to-point
+leaf2(config-if)#   ip address 10.10.4.1/31
+leaf1(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
+[#################################       ]  81%[#################################       ]  82%leaf2(config-if)#   ip ospf network point-to-point
+leaf1(config-if)# interface Ethernet1/3
+[#################################       ]  82%leaf2(config-if)#   ip router ospf UNDERLAY area 0.0.0.0
+[##################################      ]  83%[##################################      ]  83%leaf2(config-if)# interface Ethernet1/3
+leaf1(config-if)#   description to host1 bond (vPC 10 member)
+[##################################      ]  84%[##################################      ]  84%leaf2(config-if)#   description to host2 (VLAN 30)
+[###################################     ]  85%leaf1(config-if)#   switchport
+                            ^
 % Incomplete command at '^' marker.
 leaf1(config-if)#   switchport mode trunk
                              ^
@@ -1031,21 +1041,19 @@ exit[######                                  ]  13%[#####                     
                              ^
 % Invalid command at '^' marker.
 leaf1(config-if)#   channel-group 10 mode active
-leaf2(config-if)#   description to host2 (VLAN 30)
-[###################################     ]  87%[###################################     ]  87%leaf2(config-if)#   switchport
-[####################################    ]  88%[####################################    ]  88%leaf1(config-if)#   no shutdown
-[####################################    ]  89%[####################################    ]  89%leaf1(config-if)# interface port-channel10
-leaf2(config-if)#   switchport mode access
-[#####################################   ]  90%[#####################################   ]  90%[#####################################   ]  91%leaf1(config-if)#   description host1 bond - vPC 10
-[#####################################   ]  91%leaf2(config-if)#   switchport access vlan 30
-[#####################################   ]  92%[#####################################   ]  92%leaf1(config-if)#   switchport
-leaf2(config-if)#   no shutdown
-[######################################  ]  93%[######################################  ]  93%[######################################  ]  94%leaf2(config-if)# interface Ethernet1/6
-[######################################  ]  94%leaf1(config-if)#   switchport mode trunk
-leaf2(config-if)#   description to host1 bond (vPC 10 member, second leg)
-[####################################### ]  95%[####################################### ]  95%[####################################### ]  96%leaf1(config-if)#   switchport trunk native vlan 10
-[####################################### ]  96%leaf2(config-if)#   switchport
-                            ^
+[###################################     ]  85%[###################################     ]  86%leaf2(config-if)#   switchport
+[###################################     ]  86%[###################################     ]  87%leaf1(config-if)#   no shutdown
+[###################################     ]  87%[####################################    ]  88%leaf2(config-if)#   switchport mode access
+[####################################    ]  88%[####################################    ]  89%leaf1(config-if)# interface port-channel10
+[#####################################   ]  90%[####################################    ]  89%leaf2(config-if)#   switchport access vlan 30
+leaf1(config-if)#   description host1 bond - vPC 10
+[#####################################   ]  91%[#####################################   ]  90%leaf2(config-if)#   no shutdown
+[#####################################   ]  92%leaf1(config-if)#   switchport
+[#####################################   ]  91%leaf2(config-if)# interface Ethernet1/6
+[######################################  ]  93%[#####################################   ]  92%leaf2(config-if)#   description to host1 bond (vPC 10 member, second leg)
+[######################################  ]  94%[######################################  ]  93%leaf1(config-if)#   switchport mode trunk
+leaf2(config-if)#   switchport
+[####################################### ]  95%                            ^
 % Incomplete command at '^' marker.
 leaf2(config-if)#   switchport mode trunk
                              ^
@@ -1057,36 +1065,37 @@ exit[######                                  ]  13%[#####                     
                              ^
 % Invalid command at '^' marker.
 leaf2(config-if)#   channel-group 10 mode active
-[####################################### ]  97%[####################################### ]  97%leaf1(config-if)#   switchport trunk allowed vlan 10
-[########################################]  98%[########################################]  98%leaf1(config-if)#   spanning-tree port type edge trunk
+[######################################  ]  94%[####################################### ]  96%leaf1(config-if)#   switchport trunk native vlan 10
+[####################################### ]  95%[####################################### ]  97%leaf1(config-if)#   switchport trunk allowed vlan 10
 leaf2(config-if)#   no shutdown
-[########################################] 100%
-[########################################] 100%
-leaf1(config-if)#   mtu 9216
+[####################################### ]  96%[########################################]  98%[####################################### ]  97%leaf1(config-if)#   spanning-tree port type edge trunk
 leaf2(config-if)# interface port-channel10
-leaf2(config-if)#   description host1 bond - vPC 10
+[########################################] 100%
+[########################################]  98%leaf2(config-if)#   description host1 bond - vPC 10
+leaf1(config-if)#   mtu 9216
+[########################################] 100%
+leaf2(config-if)#   switchport
 leaf1(config-if)#   vpc 10
 leaf1(config-if)# interface Ethernet1/6
-leaf2(config-if)#   switchport
-leaf1(config-if)#   description L2Out trunk to external switch
-leaf1(config-if)#   switchport
 leaf2(config-if)#   switchport mode trunk
+leaf1(config-if)#   description L2Out trunk to external switch
 leaf2(config-if)#   switchport trunk native vlan 10
-leaf1(config-if)#   switchport mode trunk
+leaf1(config-if)#   switchport
 leaf2(config-if)#   switchport trunk allowed vlan 10
-leaf1(config-if)#   switchport trunk allowed vlan 50
+leaf1(config-if)#   switchport mode trunk
 leaf2(config-if)#   spanning-tree port type edge trunk
-leaf1(config-if)#   no shutdown
-leaf1(config-if)# interface Ethernet1/7
+leaf1(config-if)#   switchport trunk allowed vlan 50
 leaf2(config-if)#   mtu 9216
-leaf1(config-if)#   description L3Out to extrouter (AS 65100) in Tenant-A
+leaf1(config-if)#   no shutdown
 leaf2(config-if)#   vpc 10
+leaf1(config-if)# interface Ethernet1/7
 leaf2(config-if)# interface nve1
-leaf1(config-if)#   no switchport
 leaf2(config-if-nve)#   description VXLAN tunnel endpoint
+leaf1(config-if)#   description L3Out to extrouter (AS 65100) in Tenant-A
 leaf2(config-if-nve)#   no shutdown
 leaf2(config-if-nve)#   host-reachability protocol bgp
 leaf2(config-if-nve)#   source-interface loopback1
+leaf1(config-if)#   no switchport
 leaf2(config-if-nve)#   member vni 10010
 leaf2(config-if-nve-vni)#     ingress-replication protocol bgp
 leaf2(config-if-nve-vni)#   member vni 10020
@@ -1138,11 +1147,11 @@ exit[######                                  ]  13%[#####                     
 leaf2(config-evpn-evi)#     route-target export auto
 leaf2(config-evpn-evi)#   vni 10030 l2
 leaf2(config-evpn-evi)#     rd auto
-leaf1(config-if)#   vrf member Tenant-A
 leaf2(config-evpn-evi)#     route-target import auto
 leaf2(config-evpn-evi)#     route-target export auto
 leaf2(config-evpn-evi)#   vni 10040 l2
 leaf2(config-evpn-evi)#     rd auto
+leaf1(config-if)#   vrf member Tenant-A
 leaf2(config-evpn-evi)#     route-target import auto
 leaf2(config-evpn-evi)#     route-target export auto
 leaf2(config-evpn-evi)#   vni 10050 l2
@@ -1155,88 +1164,88 @@ Warning: Deleted all L3 config on interface Ethernet1/7
 leaf1(config-if)#   ip address 192.0.2.0/31
 leaf1(config-if)#   mtu 9216
 leaf1(config-if)#   no shutdown
-[#                                       ]   0%[#                                       ]   1%[#                                       ]   2%[##                                      ]   3%[##                                      ]   4%[###                                     ]   5%[###                                     ]   6%[###                                     ]   7%leaf1(config-if)# interface nve1
-[####                                    ]   8%leaf1(config-if-nve)#   description VXLAN tunnel endpoint
-[####                                    ]   9%leaf1(config-if-nve)#   no shutdown
-[#####                                   ]  10%leaf1(config-if-nve)#   host-reachability protocol bgp
-leaf1(config-if-nve)#   source-interface loopback1
-[#####                                   ]  11%leaf1(config-if-nve)#   member vni 10010
+[#                                       ]   0%[#                                       ]   1%[#                                       ]   2%[##                                      ]   3%[##                                      ]   4%[###                                     ]   5%leaf1(config-if)# interface nve1
+leaf1(config-if-nve)#   description VXLAN tunnel endpoint
+[###                                     ]   6%leaf1(config-if-nve)#   no shutdown
+leaf1(config-if-nve)#   host-reachability protocol bgp
+[###                                     ]   7%leaf1(config-if-nve)#   source-interface loopback1
+[####                                    ]   8%leaf1(config-if-nve)#   member vni 10010
 leaf1(config-if-nve-vni)#     ingress-replication protocol bgp
-[#####                                   ]  12%leaf1(config-if-nve-vni)#   member vni 10020
-[######                                  ]  13%leaf1(config-if-nve-vni)#     ingress-replication protocol bgp
+[####                                    ]   9%leaf1(config-if-nve-vni)#   member vni 10020
+[#####                                   ]  10%leaf1(config-if-nve-vni)#     ingress-replication protocol bgp
 leaf1(config-if-nve-vni)#   member vni 10030
-leaf1(config-if-nve-vni)#     ingress-replication protocol bgp
-[######                                  ]  14%leaf1(config-if-nve-vni)#   member vni 10040
-[#######                                 ]  15%leaf1(config-if-nve-vni)#     ingress-replication protocol bgp
-[#######                                 ]  16%leaf1(config-if-nve-vni)#   member vni 10050
-leaf1(config-if-nve-vni)#     ingress-replication protocol bgp
-[#######                                 ]  17%leaf1(config-if-nve-vni)#   member vni 50001 associate-vrf
-[########                                ]  18%leaf1(config-if-nve-vni)#   member vni 50002 associate-vrf
-leaf1(config-if-nve-vni)# router ospf UNDERLAY
-[########                                ]  19%leaf1(config-router)#   router-id 10.0.0.21
-[#########                               ]  20%leaf1(config-router)# router bgp 65000
+[#####                                   ]  11%leaf1(config-if-nve-vni)#     ingress-replication protocol bgp
+leaf1(config-if-nve-vni)#   member vni 10040
+[#####                                   ]  12%leaf1(config-if-nve-vni)#     ingress-replication protocol bgp
+leaf1(config-if-nve-vni)#   member vni 10050
+[######                                  ]  13%leaf1(config-if-nve-vni)#     ingress-replication protocol bgp
+leaf1(config-if-nve-vni)#   member vni 50001 associate-vrf
+[######                                  ]  14%leaf1(config-if-nve-vni)#   member vni 50002 associate-vrf
+[#######                                 ]  15%leaf1(config-if-nve-vni)# router ospf UNDERLAY
 leaf1(config-router)#   router-id 10.0.0.21
+leaf1(config-router)# router bgp 65000
+[#######                                 ]  16%leaf1(config-router)#   router-id 10.0.0.21
 leaf1(config-router)#   address-family l2vpn evpn
-[#########                               ]  21%leaf1(config-router-af)#     advertise-pip
+[#######                                 ]  17%leaf1(config-router-af)#     advertise-pip
 leaf1(config-router-af)#   neighbor 10.0.0.11
 leaf1(config-router-neighbor)#     remote-as 65000
-leaf1(config-router-neighbor)#     update-source loopback0
-[#########                               ]  22%leaf1(config-router-neighbor)#     address-family l2vpn evpn
-leaf1(config-router-neighbor-af)#       send-community
-[##########                              ]  23%leaf1(config-router-neighbor-af)#       send-community extended
-leaf1(config-router-neighbor-af)#   neighbor 10.0.0.12
-leaf1(config-router-neighbor)#     remote-as 65000
-[##########                              ]  24%leaf1(config-router-neighbor)#     update-source loopback0
+[########                                ]  18%leaf1(config-router-neighbor)#     update-source loopback0
 leaf1(config-router-neighbor)#     address-family l2vpn evpn
 leaf1(config-router-neighbor-af)#       send-community
-[###########                             ]  25%leaf1(config-router-neighbor-af)#       send-community extended
+[########                                ]  19%leaf1(config-router-neighbor-af)#       send-community extended
+leaf1(config-router-neighbor-af)#   neighbor 10.0.0.12
+leaf1(config-router-neighbor)#     remote-as 65000
+leaf1(config-router-neighbor)#     update-source loopback0
+leaf1(config-router-neighbor)#     address-family l2vpn evpn
+[#########                               ]  20%leaf1(config-router-neighbor-af)#       send-community
+[#########                               ]  21%leaf1(config-router-neighbor-af)#       send-community extended
 leaf1(config-router-neighbor-af)#   vrf Tenant-A
-leaf1(config-router-vrf)#     address-family ipv4 unicast
-[###########                             ]  26%leaf1(config-router-vrf-af)#       advertise l2vpn evpn
-leaf1(config-router-vrf-af)#       redistribute direct route-map ALL_ROUTES
-leaf1(config-router-vrf-af)#       maximum-paths ibgp 2
-leaf1(config-router-vrf-af)#     neighbor 192.0.2.1
-[###########                             ]  27%[############                            ]  28%leaf1(config-router-vrf-neighbor)#       remote-as 65100
-[############                            ]  29%leaf1(config-router-vrf-neighbor)#       description L3Out eBGP to extrouter
-[#############                           ]  30%leaf1(config-router-vrf-neighbor)#       address-family ipv4 unicast
-[#############                           ]  31%leaf1(config-router-vrf-neighbor-af)#         send-community
-[#############                           ]  32%leaf1(config-router-vrf-neighbor-af)#         send-community extended
-[##############                          ]  33%leaf1(config-router-vrf-neighbor-af)#   vrf Tenant-B
-[##############                          ]  34%leaf1(config-router-vrf)#     address-family ipv4 unicast
+[#########                               ]  22%leaf1(config-router-vrf)#     address-family ipv4 unicast
 leaf1(config-router-vrf-af)#       advertise l2vpn evpn
 leaf1(config-router-vrf-af)#       redistribute direct route-map ALL_ROUTES
+[##########                              ]  23%leaf1(config-router-vrf-af)#       maximum-paths ibgp 2
+leaf1(config-router-vrf-af)#     neighbor 192.0.2.1
+[##########                              ]  24%leaf1(config-router-vrf-neighbor)#       remote-as 65100
+[###########                             ]  25%leaf1(config-router-vrf-neighbor)#       description L3Out eBGP to extrouter
+[###########                             ]  26%leaf1(config-router-vrf-neighbor)#       address-family ipv4 unicast
+[###########                             ]  27%leaf1(config-router-vrf-neighbor-af)#         send-community
+[############                            ]  28%[############                            ]  29%leaf1(config-router-vrf-neighbor-af)#         send-community extended
+[#############                           ]  30%leaf1(config-router-vrf-neighbor-af)#   vrf Tenant-B
+leaf1(config-router-vrf)#     address-family ipv4 unicast
+leaf1(config-router-vrf-af)#       advertise l2vpn evpn
+[#############                           ]  31%leaf1(config-router-vrf-af)#       redistribute direct route-map ALL_ROUTES
 leaf1(config-router-vrf-af)#       maximum-paths ibgp 2
-leaf1(config-router-vrf-af)# evpn
-[###############                         ]  35%leaf1(config-evpn)#   vni 10010 l2
-leaf1(config-evpn-evi)#     rd auto
-[###############                         ]  36%leaf1(config-evpn-evi)#     route-target import auto
+[#############                           ]  32%leaf1(config-router-vrf-af)# evpn
+leaf1(config-evpn)#   vni 10010 l2
+[##############                          ]  33%leaf1(config-evpn-evi)#     rd auto
+leaf1(config-evpn-evi)#     route-target import auto
 leaf1(config-evpn-evi)#     route-target export auto
-leaf1(config-evpn-evi)#   vni 10020 l2
+[##############                          ]  34%leaf1(config-evpn-evi)#   vni 10020 l2
 leaf1(config-evpn-evi)#     rd auto
-[###############                         ]  37%leaf1(config-evpn-evi)#     route-target import auto
+[###############                         ]  35%leaf1(config-evpn-evi)#     route-target import auto
 leaf1(config-evpn-evi)#     route-target export auto
 leaf1(config-evpn-evi)#   vni 10030 l2
-[################                        ]  38%leaf1(config-evpn-evi)#     rd auto
+[###############                         ]  36%leaf1(config-evpn-evi)#     rd auto
 leaf1(config-evpn-evi)#     route-target import auto
 leaf1(config-evpn-evi)#     route-target export auto
-[################                        ]  39%leaf1(config-evpn-evi)#   vni 10040 l2
+[###############                         ]  37%leaf1(config-evpn-evi)#   vni 10040 l2
 leaf1(config-evpn-evi)#     rd auto
 leaf1(config-evpn-evi)#     route-target import auto
-[#################                       ]  40%leaf1(config-evpn-evi)#     route-target export auto
+[################                        ]  38%leaf1(config-evpn-evi)#     route-target export auto
 leaf1(config-evpn-evi)#   vni 10050 l2
 leaf1(config-evpn-evi)#     rd auto
-[#################                       ]  41%leaf1(config-evpn-evi)#     route-target import auto
+[################                        ]  39%leaf1(config-evpn-evi)#     route-target import auto
 leaf1(config-evpn-evi)#     route-target export auto
 leaf1(config-evpn-evi)# end
 leaf1# copy running-config startup-config
-[#################                       ]  42%[##################                      ]  43%[##################                      ]  44%[###################                     ]  45%[###################                     ]  46%[###################                     ]  47%[####################                    ]  48%[####################                    ]  49%[#####################                   ]  50%[#####################                   ]  50%[#####################                   ]  51%[#####################                   ]  52%[######################                  ]  53%[######################                  ]  54%[#######################                 ]  55%[#######################                 ]  56%[#######################                 ]  57%[########################                ]  58%[########################                ]  59%[#                                       ]   0%[#                                       ]   1%Copy complete, now saving to disk (please wait)...
-[#########################               ]  60%Copy complete, now saving to disk (please wait)...
-[#########################               ]  61%[#                                       ]   2%[#########################               ]  62%[##                                      ]   3%[##                                      ]   4%[##########################              ]  63%[##########################              ]  64%[###########################             ]  65%[###                                     ]   5%[###########################             ]  66%[###                                     ]   6%[###########################             ]  67%[############################            ]  68%[###                                     ]   7%Copy complete.
-[####                                    ]   8%spine2# exit
-[############################            ]  69%[#############################           ]  70%Copy complete.
-[####                                    ]   9%[#############################           ]  71%spine1# exit
-[#####                                   ]  10%[#############################           ]  72%[#####                                   ]  11%[##############################          ]  73%[##############################          ]  74%[#####                                   ]  12%[###############################         ]  75%[######                                  ]  13%[###############################         ]  76%[######                                  ]  14%[###############################         ]  77%[#######                                 ]  15%[################################        ]  78%[#######                                 ]  16%[################################        ]  79%[#################################       ]  80%[#######                                 ]  17%[#################################       ]  81%[########                                ]  18%[#################################       ]  82%[##################################      ]  83%[########                                ]  19%[##################################      ]  84%[#########                               ]  20%[###################################     ]  85%[###################################     ]  86%[#########                               ]  21%[###################################     ]  87%[#########                               ]  22%[####################################    ]  88%[####################################    ]  89%[##########                              ]  23%[#####################################   ]  90%[##########                              ]  24%[#####################################   ]  91%[###########                             ]  25%[#####################################   ]  92%[######################################  ]  93%[###########                             ]  26%[######################################  ]  94%[###########                             ]  27%[####################################### ]  95%[############                            ]  28%[####################################### ]  96%[####################################### ]  97%[########################################]  98%[############                            ]  29%[#############                           ]  30%[########################################]  99%[########################################] 100%
-[#############                           ]  31%[#############                           ]  32%[##############                          ]  33%[##############                          ]  34%[###############                         ]  35%[###############                         ]  36%[###############                         ]  37%[################                        ]  38%[################                        ]  39%[#################                       ]  40%[#################                       ]  41%[#################                       ]  42%[##################                      ]  43%[##################                      ]  44%[###################                     ]  45%[###################                     ]  46%[###################                     ]  47%[####################                    ]  48%[####################                    ]  49%[#####################                   ]  50%[#####################                   ]  50%[#####################                   ]  51%[#####################                   ]  52%[######################                  ]  53%[######################                  ]  54%[#######################                 ]  55%[#######################                 ]  56%[#######################                 ]  57%[########################                ]  58%[########################                ]  59%[#########################               ]  60%[#########################               ]  61%[#########################               ]  62%[##########################              ]  63%[##########################              ]  64%[###########################             ]  65%[###########################             ]  66%[###########################             ]  67%[############################            ]  68%[############################            ]  69%[#############################           ]  70%[#############################           ]  71%[#############################           ]  72%[##############################          ]  73%[##############################          ]  74%[###############################         ]  75%[###############################         ]  76%[###############################         ]  77%[################################        ]  78%[################################        ]  79%[#################################       ]  80%[#################################       ]  81%[#################################       ]  82%[##################################      ]  83%[##################################      ]  84%[###################################     ]  85%[###################################     ]  86%[###################################     ]  87%[####################################    ]  88%[####################################    ]  89%[#####################################   ]  90%[#####################################   ]  91%[#####################################   ]  92%[######################################  ]  93%[######################################  ]  94%[####################################### ]  95%[####################################### ]  96%[####################################### ]  97%[########################################]  98%[########################################]  99%[########################################] 100%
+[#################                       ]  40%[#################                       ]  41%[#################                       ]  42%[##################                      ]  43%[##################                      ]  44%[###################                     ]  45%[###################                     ]  46%[###################                     ]  47%[####################                    ]  48%[####################                    ]  49%[#####################                   ]  50%Copy complete, now saving to disk (please wait)...
+[#####################                   ]  50%[#####################                   ]  51%[#                                       ]   0%[#####################                   ]  52%[#                                       ]   1%[######################                  ]  53%[######################                  ]  54%Copy complete, now saving to disk (please wait)...
+[#                                       ]   2%[#######################                 ]  55%[##                                      ]   3%Copy complete.
+[#######################                 ]  56%spine2# exit
+[##                                      ]   4%[#######################                 ]  57%[###                                     ]   5%[########################                ]  58%[###                                     ]   6%[########################                ]  59%[###                                     ]   7%[#########################               ]  60%[####                                    ]   8%Copy complete.
+[####                                    ]   9%[#########################               ]  61%spine1# exit
+[#########################               ]  62%[#####                                   ]  10%[#####                                   ]  11%[##########################              ]  63%[#####                                   ]  12%[##########################              ]  64%[######                                  ]  13%[###########################             ]  65%[######                                  ]  14%[###########################             ]  66%[###########################             ]  67%[#######                                 ]  15%[############################            ]  68%[#######                                 ]  16%[############################            ]  69%[#######                                 ]  17%[#############################           ]  70%[########                                ]  18%[#############################           ]  71%[########                                ]  19%[#############################           ]  72%[#########                               ]  20%[##############################          ]  73%[#########                               ]  21%[##############################          ]  74%[#########                               ]  22%[###############################         ]  75%[##########                              ]  23%[###############################         ]  76%[##########                              ]  24%[###############################         ]  77%[###########                             ]  25%[################################        ]  78%[###########                             ]  26%[################################        ]  79%[###########                             ]  27%[############                            ]  28%[#################################       ]  80%[#################################       ]  81%[############                            ]  29%[#################################       ]  82%[#############                           ]  30%[##################################      ]  83%[#############                           ]  31%[##################################      ]  84%[#############                           ]  32%[###################################     ]  85%[##############                          ]  33%[###################################     ]  86%[##############                          ]  34%[###################################     ]  87%[###############                         ]  35%[####################################    ]  88%[###############                         ]  36%[####################################    ]  89%[###############                         ]  37%[################                        ]  38%[#####################################   ]  90%[################                        ]  39%[#####################################   ]  91%[#####################################   ]  92%[#################                       ]  40%[######################################  ]  93%[#################                       ]  41%[######################################  ]  94%[#################                       ]  42%[####################################### ]  95%[##################                      ]  43%[####################################### ]  96%[##################                      ]  44%[####################################### ]  97%[########################################]  98%[###################                     ]  45%[########################################]  99%[###################                     ]  46%[########################################] 100%
+[###################                     ]  47%[####################                    ]  48%[####################                    ]  49%[#####################                   ]  50%[#####################                   ]  50%[#####################                   ]  51%[#####################                   ]  52%[######################                  ]  53%[######################                  ]  54%[#######################                 ]  55%[#######################                 ]  56%[#######################                 ]  57%[########################                ]  58%[########################                ]  59%[#########################               ]  60%[#########################               ]  61%[#########################               ]  62%[##########################              ]  63%[##########################              ]  64%[###########################             ]  65%[###########################             ]  66%[###########################             ]  67%[############################            ]  68%[############################            ]  69%[#############################           ]  70%[#############################           ]  71%[#############################           ]  72%[##############################          ]  73%[##############################          ]  74%[###############################         ]  75%[###############################         ]  76%[###############################         ]  77%[################################        ]  78%[################################        ]  79%[#################################       ]  80%[#################################       ]  81%[#################################       ]  82%[##################################      ]  83%[##################################      ]  84%[###################################     ]  85%[###################################     ]  86%[###################################     ]  87%[####################################    ]  88%[####################################    ]  89%[#####################################   ]  90%[#####################################   ]  91%[#####################################   ]  92%[######################################  ]  93%[######################################  ]  94%[####################################### ]  95%[####################################### ]  96%[####################################### ]  97%[########################################]  98%[########################################]  99%[########################################] 100%
 [spine2] END push (exit code 0)
 [spine1] END push (exit code 0)
 Copy complete, now saving to disk (please wait)...
