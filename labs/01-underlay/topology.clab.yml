@@ -4,6 +4,7 @@ name: vxlan-evpn
 # Session 1-5: only the spine-leaf links and host1-leaf1, host2-leaf2 are used.
 # Session 6+ adds: peer-link between leaves (Eth1/4) and host1's second uplink to leaf2 (Eth1/3).
 # Session 8+ adds: external switch + host3 attached to leaf1 (L2Out demo).
+# Session 9+ adds: external BGP router + host_internet attached to leaf1 (L3Out demo).
 # Extra links in earlier sessions are just unused (no traffic, no harm).
 
 topology:
@@ -28,11 +29,16 @@ topology:
       kind: linux
     external:
       kind: linux
-      # External "switch" — actually a Linux container running a bridge.
-      # Setup commands run in switch.sh when Session 8 is applied.
     host3:
       kind: linux
-      # Behind the external switch — represents legacy workload outside the EVPN fabric.
+    extrouter:
+      kind: linux
+      image: frrouting/frr:latest
+      # FRR-based external BGP router for Session 9 L3Out.
+      # Config bootstrapping done in switch.sh after deploy.
+    host_internet:
+      kind: linux
+      # Represents "the internet" - sits behind extrouter.
 
   links:
     # Spine-leaf fabric (full mesh)
@@ -42,21 +48,18 @@ topology:
     - endpoints: ["spine2:eth2", "leaf2:eth2"]
 
     # Host attachments
-    # host1's primary uplink (used by all sessions)
     - endpoints: ["leaf1:eth3", "host1:eth1"]
-    # host2's uplink (used by all sessions; single-homed for simplicity)
     - endpoints: ["leaf2:eth3", "host2:eth1"]
 
     # vPC additions (Session 6+)
-    # Peer-link between the two leaves (carries vPC control + data)
     - endpoints: ["leaf1:eth4", "leaf2:eth4"]
-    # Peer-keepalive — dedicated link for heartbeat (separate from peer-link)
     - endpoints: ["leaf1:eth5", "leaf2:eth5"]
-    # host1's second uplink for the bond (used only in Session 6+)
     - endpoints: ["leaf2:eth6", "host1:eth2"]
 
     # L2Out additions (Session 8+)
-    # External switch trunk to leaf1 (single-attached, no vPC for simplicity)
     - endpoints: ["leaf1:eth6", "external:eth1"]
-    # External switch access port to host3
     - endpoints: ["external:eth2", "host3:eth1"]
+
+    # L3Out additions (Session 9+)
+    - endpoints: ["leaf1:eth7", "extrouter:eth1"]
+    - endpoints: ["extrouter:eth2", "host_internet:eth1"]

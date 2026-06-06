@@ -139,6 +139,7 @@ case "$SESSION" in
   06b-vpc-host-bond) MARKER="vpc 10";                            NODE="leaf1"  ;;
   06c-vpc-vxlan)     MARKER="10.0.1.100 secondary";              NODE="leaf1"  ;;
   08-l2out)          MARKER="vn-segment 10050";                  NODE="leaf1"  ;;
+  09-l3out)          MARKER="neighbor 192.0.2.1";                NODE="leaf1"  ;;
   *)                 MARKER="";                                  NODE="leaf1"  ;;
 esac
 
@@ -265,30 +266,19 @@ BONDSETUP
     ;;
   08-l2out)
     echo ""
-    echo "Setup for 8 — external switch (Linux bridge via VLAN sub-interface) + host3:"
-    echo "(Alpine doesn't ship 'bridge' command, so we use ip link with VLAN sub-interface)"
+    echo "Setup for 8 — external switch (Linux bridge) + host3:"
     cat << 'L2OUT'
 
-  # Configure external as a simple Linux bridge with VLAN sub-interface
+  # Configure external as VLAN-aware Linux bridge
   docker exec clab-vxlan-evpn-external sh -c '
-    # Tear down any prior setup
-    ip link set br0 down 2>/dev/null
-    ip link delete br0 2>/dev/null
-    ip link delete eth1.50 2>/dev/null
-
-    # Create VLAN 50 sub-interface on eth1 (the trunk toward leaf1)
-    ip link add link eth1 name eth1.50 type vlan id 50
-
-    # Simple bridge (no VLAN filtering needed - VLAN handled by sub-interface)
-    ip link add br0 type bridge
-
-    # Bridge eth1.50 (tagged VLAN 50) with eth2 (access to host3)
-    ip link set eth1.50 master br0
+    ip link add br0 type bridge vlan_filtering 1 2>/dev/null || true
+    ip link set eth1 master br0
     ip link set eth2 master br0
-
-    # Bring everything up
+    bridge vlan add vid 50 dev eth1 tagged
+    bridge vlan add vid 50 dev br0 self tagged
+    bridge vlan add vid 50 dev eth2 pvid untagged
+    bridge vlan del vid 1 dev eth2 2>/dev/null
     ip link set eth1 up
-    ip link set eth1.50 up
     ip link set eth2 up
     ip link set br0 up
   '
@@ -306,5 +296,45 @@ L2OUT
     echo "  docker exec clab-vxlan-evpn-host3 ping -c 3 10.100.50.1       # external to gateway"
     echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.50.10      # fabric to external"
     echo "  docker exec clab-vxlan-evpn-host2 ping -c 3 10.100.50.10      # cross-tenant via leak"
+    ;;
+
+  09-l3out)
+    echo ""
+    echo "Setup for 9 — external router (FRR) + host_internet:"
+    cat << 'L3OUT'
+
+  # Configure extrouter IPs
+  docker exec clab-vxlan-evpn-extrouter sh -c '
+    ip addr add 192.0.2.1/31 dev eth1 2>/dev/null
+    ip addr add 203.0.113.1/24 dev eth2 2>/dev/null
+    ip link set eth1 up
+    ip link set eth2 up
+  '
+
+  # Load FRR config
+  docker cp labs/09-l3out/extrouter/frr.conf clab-vxlan-evpn-extrouter:/etc/frr/frr.conf
+  docker cp labs/09-l3out/extrouter/daemons clab-vxlan-evpn-extrouter:/etc/frr/daemons
+  docker exec clab-vxlan-evpn-extrouter sh -c '
+    /usr/lib/frr/frrinit.sh restart 2>/dev/null || /usr/lib/frr/frr restart 2>/dev/null
+  '
+
+  # Configure host_internet
+  docker exec clab-vxlan-evpn-host_internet sh -c '
+    ip addr flush dev eth1
+    ip addr add 203.0.113.10/24 dev eth1
+    ip link set eth1 up
+    ip route replace default via 203.0.113.1
+  '
+
+L3OUT
+    echo "Verify BGP up (wait ~30 sec):"
+    echo "  docker exec clab-vxlan-evpn-extrouter vtysh -c 'show ip bgp summary'"
+    echo "  ssh admin@clab-vxlan-evpn-leaf1"
+    echo "  show bgp vrf Tenant-A ipv4 unicast summary"
+    echo ""
+    echo "End-to-end test:"
+    echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 203.0.113.10"
+    echo "  docker exec clab-vxlan-evpn-host2 ping -c 3 203.0.113.10  # via route leak"
+    echo "  docker exec clab-vxlan-evpn-host_internet ping -c 3 10.100.10.10"
     ;;
 esac
