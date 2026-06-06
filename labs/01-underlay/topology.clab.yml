@@ -1,11 +1,6 @@
 name: vxlan-evpn
 
 # Expanded topology supporting Sessions 1 through 11.
-# Session 1-5: only the spine-leaf links and host1-leaf1, host2-leaf2 are used.
-# Session 6+ adds: peer-link between leaves (Eth1/4) and host1's second uplink to leaf2 (Eth1/3).
-# Session 8+ adds: external switch + host3 attached to leaf1 (L2Out demo).
-# Session 9+ adds: external BGP router + host_internet attached to leaf1 (L3Out demo).
-# Extra links in earlier sessions are just unused (no traffic, no harm).
 
 topology:
   kinds:
@@ -33,33 +28,22 @@ topology:
       kind: linux
     extrouter:
       kind: linux
-      image: frrouting/frr:latest
-      # FRR-based external BGP router for Session 9 L3Out.
-      # Config bootstrapping done in switch.sh after deploy.
+      # Now a plain Alpine container - we install FRR at runtime via switch.sh.
+      # The frrouting/frr image had network namespace stability issues with clab.
     host_internet:
       kind: linux
-      # Represents "the internet" - sits behind extrouter.
 
   links:
-    # Spine-leaf fabric (full mesh)
     - endpoints: ["spine1:eth1", "leaf1:eth1"]
     - endpoints: ["spine1:eth2", "leaf2:eth1"]
     - endpoints: ["spine2:eth1", "leaf1:eth2"]
     - endpoints: ["spine2:eth2", "leaf2:eth2"]
-
-    # Host attachments
     - endpoints: ["leaf1:eth3", "host1:eth1"]
     - endpoints: ["leaf2:eth3", "host2:eth1"]
-
-    # vPC additions (Session 6+)
     - endpoints: ["leaf1:eth4", "leaf2:eth4"]
     - endpoints: ["leaf1:eth5", "leaf2:eth5"]
     - endpoints: ["leaf2:eth6", "host1:eth2"]
-
-    # L2Out additions (Session 8+)
     - endpoints: ["leaf1:eth6", "external:eth1"]
     - endpoints: ["external:eth2", "host3:eth1"]
-
-    # L3Out additions (Session 9+)
     - endpoints: ["leaf1:eth7", "extrouter:eth1"]
     - endpoints: ["extrouter:eth2", "host_internet:eth1"]

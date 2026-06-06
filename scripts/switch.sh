@@ -300,25 +300,41 @@ L2OUT
 
   09-l3out)
     echo ""
-    echo "Setup for 9 — external router (FRR) + host_internet:"
+    echo "Setup for 9 — external router (FRR on Alpine) + host_internet:"
     cat << 'L3OUT'
 
-  # Configure extrouter IPs
+  # 1. Install FRR in the Alpine extrouter container (~30 sec first time, cached afterwards)
+  docker exec clab-vxlan-evpn-extrouter apk add --quiet frr
+
+  # 2. Enable IP forwarding in extrouter
+  docker exec clab-vxlan-evpn-extrouter sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
+
+  # 3. Configure extrouter IPs (interfaces created by clab, persist with Alpine)
   docker exec clab-vxlan-evpn-extrouter sh -c '
-    ip addr add 192.0.2.1/31 dev eth1 2>/dev/null
-    ip addr add 203.0.113.1/24 dev eth2 2>/dev/null
+    ip addr flush dev eth1 2>/dev/null
+    ip addr flush dev eth2 2>/dev/null
+    ip addr add 192.0.2.1/31 dev eth1
+    ip addr add 203.0.113.1/24 dev eth2
     ip link set eth1 up
     ip link set eth2 up
   '
 
-  # Load FRR config
+  # 4. Copy FRR config files
   docker cp labs/09-l3out/extrouter/frr.conf clab-vxlan-evpn-extrouter:/etc/frr/frr.conf
   docker cp labs/09-l3out/extrouter/daemons clab-vxlan-evpn-extrouter:/etc/frr/daemons
+  docker exec clab-vxlan-evpn-extrouter touch /etc/frr/vtysh.conf
+
+  # 5. Start FRR daemons directly (no init script that might restart network)
   docker exec clab-vxlan-evpn-extrouter sh -c '
-    /usr/lib/frr/frrinit.sh restart 2>/dev/null || /usr/lib/frr/frr restart 2>/dev/null
+    pkill zebra 2>/dev/null
+    pkill bgpd 2>/dev/null
+    sleep 1
+    /usr/sbin/zebra -d -A 127.0.0.1
+    sleep 1
+    /usr/sbin/bgpd -d -A 127.0.0.1
   '
 
-  # Configure host_internet
+  # 6. Configure host_internet
   docker exec clab-vxlan-evpn-host_internet sh -c '
     ip addr flush dev eth1
     ip addr add 203.0.113.10/24 dev eth1
