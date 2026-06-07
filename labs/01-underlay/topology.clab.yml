@@ -1,10 +1,7 @@
 name: vxlan-evpn
 
 # Topology supporting Sessions 1 through 11.
-# Session 1-5: spine-leaf links + host1-leaf1, host2-leaf2.
-# Session 6+ adds: peer-link, host1 vPC bond second leg.
-# Session 8+ adds: external L2 switch + host3 (L2Out).
-# Session 9+ adds: extrouter (cEOS) dual-attached to both leaves + host_internet (L3Out).
+# Session 10 adds Pod2: spine3, spine4, leaf3, host4 + IPN device.
 
 topology:
   kinds:
@@ -16,6 +13,7 @@ topology:
       image: ceos:4.30.1F
 
   nodes:
+    # ===== Pod1 =====
     spine1:
       kind: cisco_n9kv
     spine2:
@@ -32,34 +30,64 @@ topology:
       kind: linux
     host3:
       kind: linux
+
+    # ===== L3Out (Session 9) =====
     extrouter:
       kind: arista_ceos
       startup-config: ../09-l3out/extrouter/extrouter.cfg
     host_internet:
       kind: linux
 
+    # ===== Pod2 (Session 10) =====
+    spine3:
+      kind: cisco_n9kv
+    spine4:
+      kind: cisco_n9kv
+    leaf3:
+      kind: cisco_n9kv
+    host4:
+      kind: linux
+
+    # ===== IPN (Inter-Pod Network) =====
+    ipn:
+      kind: arista_ceos
+      startup-config: ../10-multipod/ipn/ipn.cfg
+
   links:
-    # Spine-leaf fabric
+    # Pod1: spine-leaf fabric
     - endpoints: ["spine1:eth1", "leaf1:eth1"]
     - endpoints: ["spine1:eth2", "leaf2:eth1"]
     - endpoints: ["spine2:eth1", "leaf1:eth2"]
     - endpoints: ["spine2:eth2", "leaf2:eth2"]
 
-    # Host attachments
+    # Pod1 host attachments + vPC
     - endpoints: ["leaf1:eth3", "host1:eth1"]
     - endpoints: ["leaf2:eth3", "host2:eth1"]
-
-    # vPC peer-link + keepalive + host1 second bond leg
     - endpoints: ["leaf1:eth4", "leaf2:eth4"]
     - endpoints: ["leaf1:eth5", "leaf2:eth5"]
     - endpoints: ["leaf2:eth6", "host1:eth2"]
 
-    # L2Out: external switch
+    # Pod1 L2Out (Session 8)
     - endpoints: ["leaf1:eth6", "external:eth1"]
     - endpoints: ["external:eth2", "host3:eth1"]
 
-    # L3Out: extrouter (cEOS) dual-attached to leaf1 AND leaf2
+    # Pod1 L3Out (Session 9) - dual-attached
     - endpoints: ["leaf1:eth7", "extrouter:eth1"]
     - endpoints: ["leaf2:eth7", "extrouter:eth2"]
-    # And host_internet behind extrouter
     - endpoints: ["extrouter:eth3", "host_internet:eth1"]
+
+    # ===== Session 10: Inter-Pod Network (IPN) =====
+    # Pod1 spines to IPN
+    - endpoints: ["spine1:eth3", "ipn:eth1"]
+    - endpoints: ["spine2:eth3", "ipn:eth2"]
+    # Pod2 spines to IPN
+    - endpoints: ["spine3:eth3", "ipn:eth3"]
+    - endpoints: ["spine4:eth3", "ipn:eth4"]
+
+    # ===== Pod2 fabric =====
+    # Pod2 spine-leaf
+    - endpoints: ["spine3:eth1", "leaf3:eth1"]
+    - endpoints: ["spine4:eth1", "leaf3:eth2"]
+
+    # Pod2 host attachment (single-homed to leaf3)
+    - endpoints: ["leaf3:eth3", "host4:eth1"]
