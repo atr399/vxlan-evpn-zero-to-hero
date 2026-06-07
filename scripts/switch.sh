@@ -148,6 +148,7 @@ case "$SESSION" in
   08-l2out)          MARKER="vn-segment 10050";                  NODE="leaf1"  ;;
   09-l3out)          MARKER="neighbor 192.0.2.0";                NODE="leaf1"  ;;
   10-multipod)       MARKER="neighbor 10.0.0.13";                NODE="spine1" ;;
+  11-multisite)      MARKER="multisite border-gateway";          NODE="bgw1"   ;;
   *)                 MARKER="";                                  NODE="leaf1"  ;;
 esac
 
@@ -355,5 +356,34 @@ POD2
     echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.20.20   # Pod1 to Pod2 (same VRF)"
     echo "  docker exec clab-vxlan-evpn-host4 ping -c 3 10.100.10.10   # Pod2 to Pod1"
     echo "  docker exec clab-vxlan-evpn-host4 ping -c 3 203.0.113.10   # Pod2 to L3Out (via Pod1)"
+    ;;
+
+  11-multisite)
+    echo ""
+    echo "Setup for 11 - Site2 host (host5 in Tenant-A VLAN 60, subnet 10.100.30.0/24):"
+    cat << 'SITE2'
+
+  # host5 is in Site2, attached to leaf4 access port (VLAN 60, subnet 10.100.30.0/24)
+  # Note: VLAN 60 only exists in Site2 - this is L3-only stretching, NOT L2 stretching
+  docker exec clab-vxlan-evpn-host5 sh -c '
+    ip addr flush dev eth1
+    ip addr add 10.100.30.10/24 dev eth1
+    ip link set eth1 up
+    ip route replace default via 10.100.30.1
+  '
+
+SITE2
+    echo "Verify Multi-Site state:"
+    echo "  ssh admin@clab-vxlan-evpn-bgw1"
+    echo "  show bgp l2vpn evpn summary       # expect: spines as iBGP, bgw2 as eBGP"
+    echo "  show nve multisite dci-links"
+    echo "  show nve multisite fabric-links"
+    echo ""
+    echo "Multi-Site tests (cross-site ping):"
+    echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.30.10   # Site1 Pod1 -> Site2"
+    echo "  docker exec clab-vxlan-evpn-host4 ping -c 3 10.100.30.10   # Site1 Pod2 -> Site2"
+    echo "  docker exec clab-vxlan-evpn-host5 ping -c 3 10.100.10.10   # Site2 -> Site1 Pod1"
+    echo "  docker exec clab-vxlan-evpn-host5 ping -c 3 203.0.113.10   # Site2 -> L3Out via Site1"
+    echo "  docker exec clab-vxlan-evpn-host_internet ping -c 3 10.100.30.10  # external -> Site2"
     ;;
 esac
