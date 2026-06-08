@@ -19,14 +19,7 @@ fi
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LAB_DIR="${REPO_ROOT}/labs/${SESSION}"
 CFG_DIR="${LAB_DIR}/configs"
-# NODES list - dynamically discover from CFG_DIR
-NODES=()
-for cfg in "$CFG_DIR"/*.cfg; do
-  [ -f "$cfg" ] || continue
-  name=$(basename "$cfg" .cfg)
-  NODES+=("$name")
-done
-echo "Pushing to: ${NODES[*]}"
+NODES=("spine1" "spine2" "leaf1" "leaf2")
 
 if [ ! -d "$CFG_DIR" ]; then
   echo "ERROR: No configs found at $CFG_DIR"
@@ -147,7 +140,6 @@ case "$SESSION" in
   06c-vpc-vxlan)     MARKER="10.0.1.100 secondary";              NODE="leaf1"  ;;
   08-l2out)          MARKER="vn-segment 10050";                  NODE="leaf1"  ;;
   09-l3out)          MARKER="neighbor 192.0.2.0";                NODE="leaf1"  ;;
-  10-multipod)       MARKER="neighbor 10.0.0.13";                NODE="spine1" ;;
   11-multisite)      MARKER="multisite border-gateway";          NODE="bgw1"   ;;
   *)                 MARKER="";                                  NODE="leaf1"  ;;
 esac
@@ -334,37 +326,13 @@ L3OUT
     echo "  docker exec clab-vxlan-evpn-host_internet ping -c 3 10.200.10.10  # via route leak"
     ;;
 
-  10-multipod)
-    echo ""
-    echo "Setup for 10 - Pod2 host (host4 in Tenant-A VLAN 20):"
-    cat << 'POD2'
-
-  # host4 is in Pod2, attached to leaf3 access port (VLAN 20, subnet 10.100.20.0/24)
-  docker exec clab-vxlan-evpn-host4 sh -c '
-    ip addr flush dev eth1
-    ip addr add 10.100.20.20/24 dev eth1
-    ip link set eth1 up
-    ip route replace default via 10.100.20.1
-  '
-
-POD2
-    echo "Verify inter-pod EVPN sessions established (wait ~30 sec):"
-    echo "  ssh admin@clab-vxlan-evpn-spine1"
-    echo "  show bgp l2vpn evpn summary    # expect 4 peers: leaf1, leaf2, spine3, spine4"
-    echo ""
-    echo "Multi-Pod tests (cross-pod ping):"
-    echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.20.20   # Pod1 to Pod2 (same VRF)"
-    echo "  docker exec clab-vxlan-evpn-host4 ping -c 3 10.100.10.10   # Pod2 to Pod1"
-    echo "  docker exec clab-vxlan-evpn-host4 ping -c 3 203.0.113.10   # Pod2 to L3Out (via Pod1)"
-    ;;
-
   11-multisite)
     echo ""
     echo "Setup for 11 - Site2 host (host5 in Tenant-A VLAN 60, subnet 10.100.30.0/24):"
     cat << 'SITE2'
 
-  # host5 is in Site2, attached to leaf4 access port (VLAN 60, subnet 10.100.30.0/24)
-  # Note: VLAN 60 only exists in Site2 - this is L3-only stretching, NOT L2 stretching
+  # host5 is in Site2 (separate AS 65001), attached to leaf4 in VLAN 60 / 10.100.30.0/24
+  # NOTE: L3-only stretching - VLAN 60 only exists in Site2, NOT in Site1
   docker exec clab-vxlan-evpn-host5 sh -c '
     ip addr flush dev eth1
     ip addr add 10.100.30.10/24 dev eth1
@@ -375,15 +343,14 @@ POD2
 SITE2
     echo "Verify Multi-Site state:"
     echo "  ssh admin@clab-vxlan-evpn-bgw1"
-    echo "  show bgp l2vpn evpn summary       # expect: spines as iBGP, bgw2 as eBGP"
+    echo "  show bgp l2vpn evpn summary       # iBGP to spines + eBGP to bgw2"
     echo "  show nve multisite dci-links"
     echo "  show nve multisite fabric-links"
     echo ""
     echo "Multi-Site tests (cross-site ping):"
-    echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.30.10   # Site1 Pod1 -> Site2"
-    echo "  docker exec clab-vxlan-evpn-host4 ping -c 3 10.100.30.10   # Site1 Pod2 -> Site2"
-    echo "  docker exec clab-vxlan-evpn-host5 ping -c 3 10.100.10.10   # Site2 -> Site1 Pod1"
-    echo "  docker exec clab-vxlan-evpn-host5 ping -c 3 203.0.113.10   # Site2 -> L3Out via Site1"
+    echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.30.10   # Site1 -> Site2"
+    echo "  docker exec clab-vxlan-evpn-host5 ping -c 3 10.100.10.10   # Site2 -> Site1"
+    echo "  docker exec clab-vxlan-evpn-host5 ping -c 3 203.0.113.10   # Site2 -> L3Out (via Site1)"
     echo "  docker exec clab-vxlan-evpn-host_internet ping -c 3 10.100.30.10  # external -> Site2"
     ;;
 esac
