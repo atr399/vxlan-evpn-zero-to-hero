@@ -19,7 +19,14 @@ fi
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LAB_DIR="${REPO_ROOT}/labs/${SESSION}"
 CFG_DIR="${LAB_DIR}/configs"
-NODES=("spine1" "spine2" "leaf1" "leaf2")
+# Dynamic NODES discovery - includes ALL .cfg files in the session directory
+NODES=()
+for cfg in "$CFG_DIR"/*.cfg; do
+  [ -f "$cfg" ] || continue
+  name=$(basename "$cfg" .cfg)
+  NODES+=("$name")
+done
+echo "Pushing to: ${NODES[*]}"
 
 if [ ! -d "$CFG_DIR" ]; then
   echo "ERROR: No configs found at $CFG_DIR"
@@ -47,7 +54,7 @@ done
 
 if [ "$missing" -gt 0 ]; then
   echo ""
-  echo "ERROR: $missing/4 NX-OS containers not running."
+  echo "ERROR: $missing/${#NODES[@]} NX-OS containers not running."
   exit 1
 fi
 

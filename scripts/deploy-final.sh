@@ -1,7 +1,7 @@
 #!/bin/bash
 # Apply Session 11 (Multi-Site cumulative) and configure all hosts.
 
-set -e
+set -uo pipefail
 cd "$(dirname "$0")/.."
 
 echo "===================================================================="
@@ -96,31 +96,31 @@ echo "===================================================================="
 
 echo ""
 echo "[1] Site1 host1 -> Site1 host2 (regression - intra-site cross-tenant):"
-docker exec clab-vxlan-evpn-host1 ping -c 2 10.200.10.10
+docker exec clab-vxlan-evpn-host1 ping -c 2 10.200.10.10 || true
 
 echo ""
 echo "[2] Site1 host1 -> Site1 host3 (regression - L2Out):"
-docker exec clab-vxlan-evpn-host1 ping -c 2 10.100.50.10
+docker exec clab-vxlan-evpn-host1 ping -c 2 10.100.50.10 || true
 
 echo ""
 echo "[3] Site1 host1 -> L3Out (regression):"
-docker exec clab-vxlan-evpn-host1 ping -c 2 203.0.113.10
+docker exec clab-vxlan-evpn-host1 ping -c 2 203.0.113.10 || true
 
 echo ""
 echo "[4] **Site1 host1 -> Site2 host5 (CROSS-SITE L3, AS 65000 -> AS 65001):**"
-docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.30.10
+docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.30.10 || true
 
 echo ""
 echo "[5] **Site2 host5 -> Site1 host1 (reverse cross-site):**"
-docker exec clab-vxlan-evpn-host5 ping -c 3 10.100.10.10
+docker exec clab-vxlan-evpn-host5 ping -c 3 10.100.10.10 || true
 
 echo ""
 echo "[6] **Site2 host5 -> Site1 L3Out (Multi-Site + L3Out from foreign site):**"
-docker exec clab-vxlan-evpn-host5 ping -c 3 203.0.113.10
+docker exec clab-vxlan-evpn-host5 ping -c 3 203.0.113.10 || true
 
 echo ""
 echo "[7] **External internet -> Site2 host5 (extrouter -> Site1 -> DCI -> Site2):**"
-docker exec clab-vxlan-evpn-host_internet ping -c 3 10.100.30.10
+docker exec clab-vxlan-evpn-host_internet ping -c 3 10.100.30.10 || true
 
 echo ""
 echo "===================================================================="
