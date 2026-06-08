@@ -1,7 +1,9 @@
 name: vxlan-evpn
 
-# Topology supporting Sessions 1 through 9 + Session 11 (Multi-Site).
-# Note: Pod2/IPN from Session 10 omitted to keep RAM headroom for Multi-Site Site2.
+# Session 11d: Multi-Site with single-spine per site, vPC retained in Site1
+# Site1: spine1, leaf1, leaf2 (vPC pair), bgw1 + hosts/L2Out/L3Out
+# Site2: spine5, leaf4, bgw2, host5
+# 9 N9000v + 1 cEOS + 5 Alpine
 
 topology:
   kinds:
@@ -13,10 +15,8 @@ topology:
       image: ceos:4.30.1F
 
   nodes:
-    # ===== Site1 (Pod1 only) =====
+    # ===== Site1 (single spine, vPC pair) =====
     spine1:
-      kind: cisco_n9kv
-    spine2:
       kind: cisco_n9kv
     leaf1:
       kind: cisco_n9kv
@@ -38,7 +38,7 @@ topology:
     host_internet:
       kind: linux
 
-    # ===== Session 11: Border Gateways =====
+    # ===== Border Gateways =====
     bgw1:
       kind: cisco_n9kv
     bgw2:
@@ -53,36 +53,33 @@ topology:
       kind: linux
 
   links:
-    # Site1 Pod1: spine-leaf fabric
+    # Site1: spine1 to BOTH leaves (single spine, both leaves)
     - endpoints: ["spine1:eth1", "leaf1:eth1"]
     - endpoints: ["spine1:eth2", "leaf2:eth1"]
-    - endpoints: ["spine2:eth1", "leaf1:eth2"]
-    - endpoints: ["spine2:eth2", "leaf2:eth2"]
 
-    # Site1 host attachments + vPC
+    # Site1: host attachments + vPC peer-link
     - endpoints: ["leaf1:eth3", "host1:eth1"]
     - endpoints: ["leaf2:eth3", "host2:eth1"]
     - endpoints: ["leaf1:eth4", "leaf2:eth4"]
     - endpoints: ["leaf1:eth5", "leaf2:eth5"]
     - endpoints: ["leaf2:eth6", "host1:eth2"]
 
-    # Site1 L2Out
+    # Site1: L2Out
     - endpoints: ["leaf1:eth6", "external:eth1"]
     - endpoints: ["external:eth2", "host3:eth1"]
 
-    # Site1 L3Out - dual-attached
+    # Site1: L3Out dual-attached
     - endpoints: ["leaf1:eth7", "extrouter:eth1"]
     - endpoints: ["leaf2:eth7", "extrouter:eth2"]
     - endpoints: ["extrouter:eth3", "host_internet:eth1"]
 
-    # Session 11: bgw1 attaches to Site1 Pod1 spines
+    # bgw1 attaches to spine1 (only spine in Site1)
     - endpoints: ["spine1:eth4", "bgw1:eth1"]
-    - endpoints: ["spine2:eth4", "bgw1:eth2"]
 
-    # bgw2 attaches to Site2 spine5
+    # bgw2 attaches to spine5
     - endpoints: ["spine5:eth2", "bgw2:eth1"]
 
-    # DCI: direct link between bgw1 and bgw2
+    # DCI: bgw1 <-> bgw2 direct
     - endpoints: ["bgw1:eth3", "bgw2:eth3"]
 
     # Site2 fabric
