@@ -1,7 +1,7 @@
 name: vxlan-evpn
 
-# Topology supporting Sessions 1 through 11.
-# Session 11 adds: Site2 (spine5, leaf4, host5) + bgw1 (Site1 BGW) + bgw2 (Site2 BGW)
+# Topology supporting Sessions 1 through 9 + Session 11 (Multi-Site).
+# Note: Pod2/IPN from Session 10 omitted to keep RAM headroom for Multi-Site Site2.
 
 topology:
   kinds:
@@ -13,7 +13,7 @@ topology:
       image: ceos:4.30.1F
 
   nodes:
-    # ===== Site1 Pod1 =====
+    # ===== Site1 (Pod1 only) =====
     spine1:
       kind: cisco_n9kv
     spine2:
@@ -31,27 +31,12 @@ topology:
     host3:
       kind: linux
 
-    # ===== L3Out (Session 9) =====
+    # ===== L3Out =====
     extrouter:
       kind: arista_ceos
       startup-config: ../09-l3out/extrouter/extrouter.cfg
     host_internet:
       kind: linux
-
-    # ===== Site1 Pod2 (Session 10) =====
-    spine3:
-      kind: cisco_n9kv
-    spine4:
-      kind: cisco_n9kv
-    leaf3:
-      kind: cisco_n9kv
-    host4:
-      kind: linux
-
-    # ===== IPN (Session 10) =====
-    ipn:
-      kind: arista_ceos
-      startup-config: ../11-multisite/ipn.cfg
 
     # ===== Session 11: Border Gateways =====
     bgw1:
@@ -59,7 +44,7 @@ topology:
     bgw2:
       kind: cisco_n9kv
 
-    # ===== Session 11: Site2 =====
+    # ===== Site2 =====
     spine5:
       kind: cisco_n9kv
     leaf4:
@@ -68,50 +53,38 @@ topology:
       kind: linux
 
   links:
-    # Pod1: spine-leaf fabric
+    # Site1 Pod1: spine-leaf fabric
     - endpoints: ["spine1:eth1", "leaf1:eth1"]
     - endpoints: ["spine1:eth2", "leaf2:eth1"]
     - endpoints: ["spine2:eth1", "leaf1:eth2"]
     - endpoints: ["spine2:eth2", "leaf2:eth2"]
 
-    # Pod1 host attachments + vPC
+    # Site1 host attachments + vPC
     - endpoints: ["leaf1:eth3", "host1:eth1"]
     - endpoints: ["leaf2:eth3", "host2:eth1"]
     - endpoints: ["leaf1:eth4", "leaf2:eth4"]
     - endpoints: ["leaf1:eth5", "leaf2:eth5"]
     - endpoints: ["leaf2:eth6", "host1:eth2"]
 
-    # Pod1 L2Out (Session 8)
+    # Site1 L2Out
     - endpoints: ["leaf1:eth6", "external:eth1"]
     - endpoints: ["external:eth2", "host3:eth1"]
 
-    # Pod1 L3Out (Session 9) - dual-attached
+    # Site1 L3Out - dual-attached
     - endpoints: ["leaf1:eth7", "extrouter:eth1"]
     - endpoints: ["leaf2:eth7", "extrouter:eth2"]
     - endpoints: ["extrouter:eth3", "host_internet:eth1"]
 
-    # Inter-Pod Network (Session 10)
-    - endpoints: ["spine1:eth3", "ipn:eth1"]
-    - endpoints: ["spine2:eth3", "ipn:eth2"]
-    - endpoints: ["spine3:eth3", "ipn:eth3"]
-    - endpoints: ["spine4:eth3", "ipn:eth4"]
-
-    # Pod2 fabric (Session 10)
-    - endpoints: ["spine3:eth1", "leaf3:eth1"]
-    - endpoints: ["spine4:eth1", "leaf3:eth2"]
-    - endpoints: ["leaf3:eth3", "host4:eth1"]
-
-    # ===== Session 11: BGW connections =====
-    # bgw1 attaches to Site1 Pod1 spines (Eth1/4 reserved on spines)
+    # Session 11: bgw1 attaches to Site1 Pod1 spines
     - endpoints: ["spine1:eth4", "bgw1:eth1"]
     - endpoints: ["spine2:eth4", "bgw1:eth2"]
 
-    # bgw2 attaches to Site2's spine5
+    # bgw2 attaches to Site2 spine5
     - endpoints: ["spine5:eth2", "bgw2:eth1"]
 
-    # DCI link between bgw1 and bgw2 (direct, no DCI device)
+    # DCI: direct link between bgw1 and bgw2
     - endpoints: ["bgw1:eth3", "bgw2:eth3"]
 
-    # Site2 fabric: spine5 <-> leaf4 <-> host5
+    # Site2 fabric
     - endpoints: ["spine5:eth1", "leaf4:eth1"]
     - endpoints: ["leaf4:eth3", "host5:eth1"]
