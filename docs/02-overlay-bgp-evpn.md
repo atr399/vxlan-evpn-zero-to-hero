@@ -37,6 +37,29 @@ containerlab destroy -t labs/01-underlay/topology.clab.yml --cleanup
 
 No host setup needed — overlay control plane only, no VNIs yet.
 
+## Topology (this session)
+
+Same physical wiring as Session 1. What's new is the **control-plane
+overlay** — iBGP-EVPN sessions, loopback-sourced, with the spines as
+route reflectors:
+
+```
+          spine1 (RR)                 spine2 (RR)
+          10.0.0.11                   10.0.0.12
+           ^  ^                         ^  ^
+           |   \   iBGP-EVPN (AS 65000) /  |
+           |    \   lo0 <-> lo0 sourced/   |
+           |     +---------+  +-------+    |
+           |               |  |            |
+           |               |  |            |
+          leaf1 -----------+  +--------- leaf2
+          10.0.0.21 (RR client)          10.0.0.22 (RR client)
+```
+
+4 sessions total: each leaf peers with **both** spines. Leaves do NOT
+peer with each other — the RRs reflect between them. `PfxRcd=0` is
+correct this session (no VNIs yet).
+
 ---
 
 ## Mental model

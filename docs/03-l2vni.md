@@ -30,6 +30,27 @@ cd ~/vxlan-evpn-zero-to-hero
 `./scripts/deploy.sh 03-l2vni` (~15 min boot) and configure the hosts
 as printed in the doc below.
 
+## Topology (this session)
+
+Same physical wiring. What's new: VLAN 10 mapped to **L2VNI 10010** on
+both leaves, hosts in one stretched subnet, and the first VXLAN tunnel:
+
+```
+   host1                                              host2
+   10.100.10.10/24                            10.100.10.11/24
+     |  eth1                                          eth1 |
+     | (VLAN 10 access, leaf1 Eth1/3)  (leaf2 Eth1/3, VLAN 10) |
+   leaf1  VTEP 10.0.1.21 ============== VTEP 10.0.1.22  leaf2
+                 \\  VXLAN tunnel, VNI 10010  //
+                  \\   (routed via spines)   //
+                   spine1 / spine2 (IP transit only,
+                   never decapsulate)
+```
+
+The hosts believe they share one LAN; the frame is VXLAN-encapsulated
+leaf-to-leaf with VNI 10010, and the spines just route the outer
+UDP/IP.
+
 ---
 
 ## Mental model

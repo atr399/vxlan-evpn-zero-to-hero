@@ -44,6 +44,40 @@ watch -n 10 'docker ps --format "{{.Names}}\t{{.Status}}" | grep clab-vxlan'
 # for both eBGP sessions, then the end-to-end tests it lists.
 ```
 
+## Topology (this session)
+
+Base fabric + the L3Out edge (new nodes in caps):
+
+```
+            spine1            spine2
+               |  \            /  |
+             leaf1 == vPC == leaf2
+              |  \             |  \
+              | Eth1/7         | Eth1/7
+              |    \           |    \
+            hosts   +---------------+
+            L2Out   |   EXTROUTER   |   eBGP AS 65000 <-> AS 65100
+                    | (cEOS, AS 65100)
+                    +---------------+
+                          | eth3
+                          | 203.0.113.1/24
+                    HOST_INTERNET
+                    203.0.113.10/24
+```
+
+| New link | A-side | B-side | Role |
+|----------|--------|--------|------|
+| L3Out 1 | leaf1 Eth1/7 | extrouter eth1 | routed, VRF Tenant-A, eBGP |
+| L3Out 2 | leaf2 Eth1/7 | extrouter eth2 | routed, VRF Tenant-A, eBGP |
+| External LAN | extrouter eth3 | host_internet eth1 | 203.0.113.0/24 |
+
+> Note: the lab implements the **dual-attached** L3Out (both leaves
+> peer with the external router) — the production pattern this doc's
+> "Production patterns" section foreshadows. Decision 2 below
+> describes the simpler single-attached variant the session was first
+> designed around; the dual-attached build is what's deployed and
+> tested.
+
 ---
 
 ## Mental model

@@ -44,6 +44,35 @@ watch -n 10 'docker ps --format "{{.Names}}\t{{.Status}}" | grep clab-vxlan'
 # then the three L2Out test pings it lists.
 ```
 
+## Topology (this session)
+
+Base fabric + the L2Out extension (new nodes in caps):
+
+```
+            spine1            spine2
+               |  \            /  |
+             leaf1 == vPC == leaf2
+            /     \              \
+        Eth1/3   Eth1/6         Eth1/3
+          |         |              |
+        host1   EXTERNAL         host2
+        (vPC     (Linux bridge,
+         bond)    802.1Q trunk,
+                  VLAN 50)
+                    | eth2
+                  HOST3
+                  10.100.50.10/24
+                  gw 10.100.50.1 (anycast SVI)
+```
+
+| New link | A-side | B-side | Role |
+|----------|--------|--------|------|
+| L2Out trunk | leaf1 Eth1/6 | external eth1 | 802.1Q, VLAN 50 |
+| Access | external eth2 | host3 eth1 | untagged VLAN 50 |
+
+VLAN 50 → VNI 10050, Tenant-A. The external switch never sees VXLAN —
+plain Ethernet at the fabric edge.
+
 ---
 
 ## Mental model

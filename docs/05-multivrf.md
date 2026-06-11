@@ -43,6 +43,30 @@ cd ~/vxlan-evpn-zero-to-hero
 independently deployable with `deploy.sh`, but the chain above is the
 intended teaching flow.
 
+## Topology (this session)
+
+Same physical wiring. What's new: a second VRF with its own L3VNI —
+two parallel routing planes on the same fabric:
+
+```
+   host1                                          host2 (MOVED)
+   Tenant-A VLAN 10                               Tenant-B VLAN 30
+   10.100.10.10/24                                10.200.10.10/24
+     |                                                  |
+   leaf1                                              leaf2
+
+   Tenant-A: VLANs 10,20  -> L2VNIs 10010,10020 -> L3VNI 50001
+   Tenant-B: VLANs 30,40  -> L2VNIs 10030,10040 -> L3VNI 50002
+
+      Tenant-A plane  ========= L3VNI 50001 =========
+      Tenant-B plane  ========= L3VNI 50002 =========
+                      (isolated until 5b's route leak:
+                       RT 65000:50001 <-> 65000:50002 import)
+```
+
+5a proves the planes don't touch (ping FAILS). 5b builds the explicit
+on-ramp via route-target import (same ping SUCCEEDS, TTL still 62).
+
 ---
 
 ## Mental model

@@ -34,6 +34,25 @@ cd ~/vxlan-evpn-zero-to-hero
 protocol swap (OSPF removed → eBGP forms → EVPN re-converges). Don't
 debug inside that window — wait, then run the tests below.
 
+## Topology (this session)
+
+No physical change — pure protocol refactor. The ASN map replaces
+OSPF + single-AS iBGP:
+
+```
+        spine1 (AS 65001)        spine2 (AS 65002)
+            |    \                  /    |
+     eBGP underlay + eBGP-EVPN on every link
+            |      \              /      |
+        leaf1 (AS 65011)      leaf2 (AS 65011)
+              [ vPC pair shares the ASN ]
+              [ allowas-in 1 on EVPN    ]
+```
+
+Per-link eBGP sessions (interface-addressed), no more route
+reflectors, RTs hardcoded to `65000:VNI`, `rewrite-evpn-rt-asn` on the
+spines.
+
 ---
 
 ## Mental model

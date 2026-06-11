@@ -33,6 +33,31 @@ cd ~/vxlan-evpn-zero-to-hero
 **Alternative (standalone)**: destroy + `./scripts/deploy.sh
 04-anycast-gw`, then the same host setup.
 
+## Topology (this session)
+
+Same physical wiring. What's new: two subnets, an **anycast gateway on
+every leaf** (same IP + MAC), VRF Tenant-A, and the **L3VNI** for
+routed traffic:
+
+```
+   host1 VLAN 10                              host2 VLAN 20
+   10.100.10.10/24                            10.100.20.10/24
+   gw 10.100.10.1                             gw 10.100.20.1
+     |                                              |
+   leaf1                                          leaf2
+   SVI Vlan10: 10.100.10.1  <- same anycast ->  SVI Vlan10: 10.100.10.1
+   SVI Vlan20: 10.100.20.1     IPs + MAC        SVI Vlan20: 10.100.20.1
+   (anycast MAC 0000.2222.3333 on both leaves, all SVIs)
+     \\                                            //
+      ================ L3VNI 50001 =================
+        (VRF Tenant-A routed traffic, symmetric IRB:
+         both leaves route; TTL drops by 2 end-to-end)
+```
+
+Cross-subnet traffic: routed at the ingress leaf into VNI **50001**,
+carried across, routed again at egress. Same-subnet traffic still uses
+the L2VNI (10010).
+
 ---
 
 ## Mental model

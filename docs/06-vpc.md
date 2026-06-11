@@ -45,6 +45,37 @@ cd ~/vxlan-evpn-zero-to-hero
 # vPC comes up, NVE flips to VPC-VIP-Only, cross-tenant ping works.
 ```
 
+## Topology (this session)
+
+The dormant links from Session 1 finally light up. vPC detail view:
+
+```
+              spine1                  spine2
+                |  \                  /  |
+                |   +------+  +------+   |
+                |          |  |          |
+              leaf1 ===== peer-link ===== leaf2
+                |   Eth1/4 (Po100) Eth1/4  |
+                |   Eth1/5 keepalive Eth1/5|
+                |   (10.20.0.0/31)         |
+              Eth1/3                    Eth1/6
+                 \                        /
+                  \    LACP bond0       /
+                   +----- host1 -------+
+                    eth1          eth2
+                    10.100.10.10/24 on bond0
+
+   Shared VTEP (6c): lo1 secondary 10.0.1.100/32 on BOTH leaves
+   -> EVPN advertises the vPC pair as ONE VTEP
+```
+
+| vPC element | Where |
+|-------------|-------|
+| Peer-link (Po100) | leaf1 Eth1/4 ↔ leaf2 Eth1/4 |
+| Peer-keepalive | leaf1 Eth1/5 ↔ leaf2 Eth1/5, 10.20.0.0/31 |
+| Host bond (vPC 10 / Po10) | leaf1 Eth1/3 + leaf2 Eth1/6 → host1 eth1+eth2 |
+| Shared VTEP VIP | 10.0.1.100/32 secondary on lo1, both leaves |
+
 ---
 
 ## Mental model

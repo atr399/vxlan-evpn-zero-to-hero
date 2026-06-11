@@ -37,6 +37,48 @@ No host setup needed this session — Session 1 is underlay-only.
 When done studying, do **not** destroy: Session 2 continues on this
 running lab with `./scripts/switch.sh 02-overlay`.
 
+## Topology (this session)
+
+```
+      +----------------+            +----------------+
+      |     spine1     |            |     spine2     |
+      | lo0 10.0.0.11  |            | lo0 10.0.0.12  |
+      +----------------+            +----------------+
+       Eth1/1    Eth1/2              Eth1/1    Eth1/2
+          |          \                  /         |
+          |           \                /          |
+          |            \              /           |
+          |             +--- X ------+            |
+          |            /              \           |
+       Eth1/1     Eth1/2           Eth1/1      Eth1/2
+      +----------------+            +----------------+
+      |     leaf1      |            |     leaf2      |
+      | lo0 10.0.0.21  |            | lo0 10.0.0.22  |
+      | lo1 10.0.1.21  |            | lo1 10.0.1.22  |
+      +----------------+            +----------------+
+        Eth1/3                        Eth1/3
+          |                             |
+       +-------+                     +-------+
+       | host1 |                     | host2 |
+       +-------+                     +-------+
+```
+
+| Link | A-side | B-side | Notes |
+|------|--------|--------|-------|
+| spine1–leaf1 | spine1 Eth1/1 | leaf1 Eth1/1 | P2P /31, OSPF |
+| spine1–leaf2 | spine1 Eth1/2 | leaf2 Eth1/1 | P2P /31, OSPF |
+| spine2–leaf1 | spine2 Eth1/1 | leaf1 Eth1/2 | P2P /31, OSPF |
+| spine2–leaf2 | spine2 Eth1/2 | leaf2 Eth1/2 | P2P /31, OSPF |
+| leaf1–host1  | leaf1 Eth1/3  | host1 eth1   | host attach |
+| leaf2–host2  | leaf2 Eth1/3  | host2 eth1   | host attach |
+| leaf1–leaf2  | leaf1 Eth1/4  | leaf2 Eth1/4 | **dormant until S6** (peer-link) |
+| leaf1–leaf2  | leaf1 Eth1/5  | leaf2 Eth1/5 | **dormant until S6** (keepalive) |
+| leaf2–host1  | leaf2 Eth1/6  | host1 eth2   | **dormant until S6** (bond NIC 2) |
+
+Exact link IPs: [`common/ipplan.md`](../common/ipplan.md). The three
+dormant links are physically wired from day one so Sessions 6+ need no
+topology change.
+
 ---
 
 ## Mental model
