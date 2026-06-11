@@ -220,7 +220,15 @@ to other sessions takes ~10 seconds each.
 This boots 4 NX-OS containers in parallel. Takes 15-20 min on first
 run. Go get coffee.
 
-When done, verify Session 1 works:
+The nodes boot with **blank NX-OS** — configs are pushed separately.
+Once every n9kv shows `(healthy)` in `docker ps`, push Session 1's
+configs:
+
+```bash
+./scripts/switch.sh 01-underlay     # ~1 min, parallel push to all 4 nodes
+```
+
+Then verify Session 1 works:
 
 ```bash
 ssh admin@clab-vxlan-evpn-spine1
@@ -270,6 +278,11 @@ When done for the day:
 ```bash
 ./scripts/reset.sh 01-underlay  # tears down, frees RAM
 ```
+
+> **Sessions 8-11** (L2Out, L3Out, Multi-Pod, Multi-Site) add extra
+> devices and deploy as their own self-contained topologies rather
+> than chaining. See [`DEPLOYMENT.md`](DEPLOYMENT.md) for the exact
+> bring-up of every session before attempting those.
 
 You can also just stop the GCP VM via the console (saves money while
 not running; resume takes 30 sec).

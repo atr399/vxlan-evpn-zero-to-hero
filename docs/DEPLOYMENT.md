@@ -78,6 +78,13 @@ Cisco N9000v needs ~5–5.5 GB each. Measure on your VM with `free -h`.
 > 8, 9, 10, or 11 (or coming back to them)? Tear down and `deploy.sh`
 > fresh.
 
+> **Why some lab folders have no `topology.clab.yml`:** Model A
+> sessions (05a–07) are config-push-only — they run on the base
+> topology booted in 01-underlay, so they intentionally have no
+> topology file of their own. (02–04 keep a copy of the base topology
+> as a standalone-deploy convenience.) Model B sessions (08–11) each
+> have their own self-contained topology file.
+
 ---
 
 ## The scripts

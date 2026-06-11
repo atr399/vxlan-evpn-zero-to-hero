@@ -20,9 +20,12 @@ docker ps              # currently running containers
 docker ps -a           # all containers, including stopped ones
 ```
 
-In our lab, you should see 6 containers when active:
+In the base fabric (Sessions 1-7), you should see 6 containers:
 - 4 NX-OS nodes: `clab-vxlan-evpn-spine1`, `spine2`, `leaf1`, `leaf2`
 - 2 hosts: `clab-vxlan-evpn-host1`, `host2`
+
+Sessions 8-11 deploy bigger self-contained topologies (8-15
+containers) — see `DEPLOYMENT.md` for each session's node list.
 
 ### "What's a container 'doing' right now"
 
