@@ -19,6 +19,33 @@ fabric's "edge to the world."
 
 ---
 
+## Bring-up
+
+**Self-contained session (Model B)** — this topology adds the
+`extrouter` and `host_internet` containers, so it deploys fresh rather
+than layering on the running lab. See
+[`DEPLOYMENT.md`](DEPLOYMENT.md).
+
+```bash
+cd ~/vxlan-evpn-zero-to-hero
+
+# 1. Tear down the running lab
+containerlab destroy -t labs/01-underlay/topology.clab.yml --cleanup
+
+# 2. Deploy this session's self-contained topology (~15 min).
+#    extrouter loads its startup config at boot - no separate push needed
+#    for it.
+./scripts/deploy.sh 09-l3out
+
+# 3. Wait for healthy, then push the NX-OS configs
+watch -n 10 'docker ps --format "{{.Names}}\t{{.Status}}" | grep clab-vxlan'
+./scripts/switch.sh 09-l3out
+# switch.sh prints the host_internet setup command. Run it, wait ~30 s
+# for both eBGP sessions, then the end-to-end tests it lists.
+```
+
+---
+
 ## Mental model
 
 In Session 8 we extended L2 (a single VLAN) out to a non-EVPN

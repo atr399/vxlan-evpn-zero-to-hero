@@ -21,6 +21,30 @@ things in order:
 
 ---
 
+## Bring-up
+
+Two sub-sessions, applied in order on the running lab (Model A):
+
+```bash
+cd ~/vxlan-evpn-zero-to-hero
+
+# 5a — add Tenant-B, prove isolation
+./scripts/switch.sh 05a-tenant-b
+# switch.sh prints the host setup: host2 MOVES to Tenant-B's
+# 10.200.10.0/24. Run those commands, then the isolation test
+# (host1 -> host2 ping SHOULD FAIL).
+
+# 5b — route leak (after 5a verified)
+./scripts/switch.sh 05b-route-leak
+# No host changes. The same ping now SUCCEEDS.
+```
+
+**Alternative (standalone)**: each sub-session's lab folder is also
+independently deployable with `deploy.sh`, but the chain above is the
+intended teaching flow.
+
+---
+
 ## Mental model
 
 Sessions 1-4 built a fabric with **one tenant**: Tenant-A. Everything

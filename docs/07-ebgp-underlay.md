@@ -18,6 +18,24 @@ overlay ASN with leaves.
 
 ---
 
+## Bring-up
+
+Pure config refactor on the running lab (Model A) — no topology change,
+no host changes:
+
+```bash
+cd ~/vxlan-evpn-zero-to-hero
+./scripts/switch.sh 07-ebgp-underlay
+# The push includes deletions (no router ospf / no router bgp 65000)
+# followed by the new per-device-ASN BGP config.
+```
+
+**Expect a ~30–60 s window of partial reachability** during the
+protocol swap (OSPF removed → eBGP forms → EVPN re-converges). Don't
+debug inside that window — wait, then run the tests below.
+
+---
+
 ## Mental model
 
 OSPF was easy to understand:

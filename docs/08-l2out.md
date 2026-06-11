@@ -21,6 +21,31 @@ attached workloads. L2Out solves this.
 
 ---
 
+## Bring-up
+
+**Self-contained session (Model B)** — this topology adds the
+`external` switch and `host3` containers, so it deploys fresh rather
+than layering on the running lab. See
+[`DEPLOYMENT.md`](DEPLOYMENT.md).
+
+```bash
+cd ~/vxlan-evpn-zero-to-hero
+
+# 1. Tear down the running lab (frees RAM, avoids node-name clashes)
+containerlab destroy -t labs/01-underlay/topology.clab.yml --cleanup
+
+# 2. Deploy this session's self-contained topology (~15 min)
+./scripts/deploy.sh 08-l2out
+
+# 3. Wait for all n9kv (healthy), then push configs
+watch -n 10 'docker ps --format "{{.Names}}\t{{.Status}}" | grep clab-vxlan'
+./scripts/switch.sh 08-l2out
+# switch.sh prints the external-bridge + host3 setup commands. Run them,
+# then the three L2Out test pings it lists.
+```
+
+---
+
 ## Mental model
 
 A VLAN in a VXLAN fabric is mapped to a VNI. Within the fabric,

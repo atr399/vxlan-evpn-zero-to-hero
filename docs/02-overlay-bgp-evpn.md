@@ -15,6 +15,30 @@ exercises.
 
 ---
 
+## Bring-up
+
+**Recommended (Model A chain)** — the Session 1 lab is still running;
+push this session's cumulative config onto it:
+
+```bash
+cd ~/vxlan-evpn-zero-to-hero
+./scripts/switch.sh 02-overlay
+# Pushes configs to all 4 nodes in parallel (~1 min), saves to startup,
+# and verifies the session marker landed.
+```
+
+**Alternative (standalone)** — no lab running, or you want a clean
+start:
+
+```bash
+containerlab destroy -t labs/01-underlay/topology.clab.yml --cleanup
+./scripts/deploy.sh 02-overlay          # fresh boot with 02 configs, ~15 min
+```
+
+No host setup needed — overlay control plane only, no VNIs yet.
+
+---
+
 ## Mental model
 
 Session 1 was the highway system. Session 2 is the **postal service**
@@ -234,7 +258,11 @@ Notice the `0` in the `PfxRcd` column — sessions are up but no
 EVPN prefixes are being exchanged yet. That's correct for this
 session. Session 3 will fill that in.
 
-## Deploying
+## Deploying (standalone alternative)
+
+> The recommended path is the `switch.sh` chain — see **Bring-up** at
+> the top of this doc. The steps below are the standalone alternative:
+> a fresh deploy of this session's own topology.
 
 ```bash
 ./scripts/deploy.sh 02-overlay

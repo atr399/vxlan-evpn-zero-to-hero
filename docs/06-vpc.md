@@ -18,6 +18,35 @@ individual leaves.
 
 ---
 
+## Bring-up
+
+Three checkpointed sub-sessions, applied in order on the running lab
+(Model A). The current base topology already includes the vPC wiring
+(peer-link Eth1/4, keepalive Eth1/5, host1 dual-NIC) — if your running
+lab was deployed from an older topology without these links, do a fresh
+`./scripts/reset.sh 01-underlay` first, then re-chain 01→05b.
+
+```bash
+cd ~/vxlan-evpn-zero-to-hero
+
+# 6a — vPC domain + peer-link + keepalive
+./scripts/switch.sh 06a-vpc-base
+# Verify 'peer adjacency formed ok'. The Sec-IP inconsistency warning
+# is EXPECTED here.
+
+# 6b — host LACP bond + vPC member port
+./scripts/switch.sh 06b-vpc-host-bond
+# switch.sh prints the host1 bond setup (sysfs method). Run it.
+# EXPECTED RESULT: vPC 10 stays DOWN on consistency failure - that is
+# the lesson of 6b, fixed in 6c.
+
+# 6c — the keystone fix (shared VTEP secondary IP)
+./scripts/switch.sh 06c-vpc-vxlan
+# vPC comes up, NVE flips to VPC-VIP-Only, cross-tenant ping works.
+```
+
+---
+
 ## Mental model
 
 In a real data center, every server has **two** physical NICs.

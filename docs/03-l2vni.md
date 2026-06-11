@@ -15,6 +15,23 @@ the verification (which is genuinely fun this session).
 
 ---
 
+## Bring-up
+
+**Recommended (Model A chain)** — push onto the running lab:
+
+```bash
+cd ~/vxlan-evpn-zero-to-hero
+./scripts/switch.sh 03-l2vni
+# After the push, switch.sh prints this session's host-setup commands
+# (host1/host2 IPs in 10.100.10.0/24) and the test ping. Run those.
+```
+
+**Alternative (standalone)**: destroy the running lab, then
+`./scripts/deploy.sh 03-l2vni` (~15 min boot) and configure the hosts
+as printed in the doc below.
+
+---
+
 ## Mental model
 
 Sessions 1-2 paved roads and hired a postman. Session 3 is when the
@@ -169,7 +186,11 @@ and reflect BGP routes. They never decapsulate VXLAN. That's the
 elegance of spine-leaf: spines have the same config no matter how many
 VNIs the fabric has.
 
-## Deploying
+## Deploying (standalone alternative)
+
+> The recommended path is the `switch.sh` chain — see **Bring-up** at
+> the top of this doc. The steps below are the standalone alternative:
+> a fresh deploy of this session's own topology.
 
 ```bash
 # If Session 2 lab is running, destroy it first

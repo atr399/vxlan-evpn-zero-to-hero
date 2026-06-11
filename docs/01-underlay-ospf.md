@@ -13,6 +13,29 @@ exercises.
 
 ---
 
+## Bring-up
+
+This is the **first deploy of the base fabric** (Model A — see
+[`DEPLOYMENT.md`](DEPLOYMENT.md)). Sessions 1–7 all run on this same
+running lab; you deploy once here, then advance with `switch.sh`.
+
+```bash
+cd ~/vxlan-evpn-zero-to-hero
+
+# Boot the base fabric. Configs in labs/01-underlay/configs/ are applied
+# as startup-config at boot. ~15 min for the four N9000v.
+./scripts/deploy.sh 01-underlay
+
+# Wait until every n9kv shows (healthy):
+watch -n 10 'docker ps --format "{{.Names}}\t{{.Status}}" | grep clab-vxlan'
+```
+
+No host setup needed this session — Session 1 is underlay-only.
+When done studying, do **not** destroy: Session 2 continues on this
+running lab with `./scripts/switch.sh 02-overlay`.
+
+---
+
 ## Mental model
 
 Before any config, picture what we're building.

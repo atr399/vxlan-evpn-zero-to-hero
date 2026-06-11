@@ -18,6 +18,23 @@ makes the concepts concrete.
 
 ---
 
+## Bring-up
+
+**Recommended (Model A chain)** — push onto the running lab:
+
+```bash
+cd ~/vxlan-evpn-zero-to-hero
+./scripts/switch.sh 04-anycast-gw
+# switch.sh prints the host-setup commands for this session:
+# host1 stays in VLAN 10 (gw 10.100.10.1), host2 moves to VLAN 20
+# (gw 10.100.20.1), both with 'ip route replace default'. Run those.
+```
+
+**Alternative (standalone)**: destroy + `./scripts/deploy.sh
+04-anycast-gw`, then the same host setup.
+
+---
+
 ## Mental model
 
 In Session 3, the fabric was one big virtual LAN. Hosts talked
@@ -213,7 +230,11 @@ gateway. You just see fewer ARP broadcasts in the wild.
 - host1 stays on VLAN 10, gets gateway `10.100.10.1`
 - host2 moves to VLAN 20, gets gateway `10.100.20.1`
 
-## Deploying
+## Deploying (standalone alternative)
+
+> The recommended path is the `switch.sh` chain — see **Bring-up** at
+> the top of this doc. The steps below are the standalone alternative:
+> a fresh deploy of this session's own topology.
 
 ```bash
 containerlab destroy -t labs/03-l2vni/topology.clab.yml --cleanup
