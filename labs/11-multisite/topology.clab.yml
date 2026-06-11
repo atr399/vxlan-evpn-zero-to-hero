@@ -1,0 +1,75 @@
+name: vxlan-evpn
+
+# Session 11 Path A: Multi-Site with COLLAPSED SPINE+BGW
+# Site1 (AS 65000): spine1 (spine+BGW), leaf1, leaf2 (vPC pair), hosts, L2Out, L3Out
+# Site2 (AS 65001): spine5 (spine+BGW), leaf4, host5
+# 6 N9000v + 1 cEOS + 5 Alpine
+
+topology:
+  kinds:
+    cisco_n9kv:
+      image: vrnetlab/cisco_n9kv:9300-10.5.5
+    linux:
+      image: alpine:latest
+    arista_ceos:
+      image: ceos:4.30.1F
+
+  nodes:
+    # ===== Site1 =====
+    spine1:
+      kind: cisco_n9kv
+    leaf1:
+      kind: cisco_n9kv
+    leaf2:
+      kind: cisco_n9kv
+    host1:
+      kind: linux
+    host2:
+      kind: linux
+    external:
+      kind: linux
+    host3:
+      kind: linux
+
+    # ===== L3Out =====
+    extrouter:
+      kind: arista_ceos
+      startup-config: ../09-l3out/extrouter/extrouter.cfg
+    host_internet:
+      kind: linux
+
+    # ===== Site2 =====
+    spine5:
+      kind: cisco_n9kv
+    leaf4:
+      kind: cisco_n9kv
+    host5:
+      kind: linux
+
+  links:
+    # Site1 fabric: spine1 to both leaves
+    - endpoints: ["spine1:eth1", "leaf1:eth1"]
+    - endpoints: ["spine1:eth2", "leaf2:eth1"]
+
+    # Site1 vPC + hosts
+    - endpoints: ["leaf1:eth3", "host1:eth1"]
+    - endpoints: ["leaf2:eth3", "host2:eth1"]
+    - endpoints: ["leaf1:eth4", "leaf2:eth4"]
+    - endpoints: ["leaf1:eth5", "leaf2:eth5"]
+    - endpoints: ["leaf2:eth6", "host1:eth2"]
+
+    # Site1 L2Out
+    - endpoints: ["leaf1:eth6", "external:eth1"]
+    - endpoints: ["external:eth2", "host3:eth1"]
+
+    # Site1 L3Out (dual-attached)
+    - endpoints: ["leaf1:eth7", "extrouter:eth1"]
+    - endpoints: ["leaf2:eth7", "extrouter:eth2"]
+    - endpoints: ["extrouter:eth3", "host_internet:eth1"]
+
+    # DCI: spine1 <-> spine5 (collapsed BGW peering)
+    - endpoints: ["spine1:eth3", "spine5:eth3"]
+
+    # Site2 fabric
+    - endpoints: ["spine5:eth1", "leaf4:eth1"]
+    - endpoints: ["leaf4:eth3", "host5:eth1"]

@@ -22,12 +22,15 @@ running lab; you deploy once here, then advance with `switch.sh`.
 ```bash
 cd ~/vxlan-evpn-zero-to-hero
 
-# Boot the base fabric. Configs in labs/01-underlay/configs/ are applied
-# as startup-config at boot. ~15 min for the four N9000v.
+# Boot the base fabric (nodes come up with blank NX-OS).
+# ~15 min for the four N9000v.
 ./scripts/deploy.sh 01-underlay
 
 # Wait until every n9kv shows (healthy):
 watch -n 10 'docker ps --format "{{.Names}}\t{{.Status}}" | grep clab-vxlan'
+
+# Push the Session 1 configs onto the booted nodes:
+./scripts/switch.sh 01-underlay
 ```
 
 No host setup needed this session — Session 1 is underlay-only.
