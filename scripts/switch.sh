@@ -145,9 +145,11 @@ case "$SESSION" in
   06a-vpc-base)      MARKER="vpc domain 10";                     NODE="leaf1"  ;;
   06b-vpc-host-bond) MARKER="vpc 10";                            NODE="leaf1"  ;;
   06c-vpc-vxlan)     MARKER="10.0.1.100 secondary";              NODE="leaf1"  ;;
+  07-ebgp-underlay)  MARKER="rewrite-evpn-rt-asn";               NODE="spine1" ;;
   08-l2out)          MARKER="vn-segment 10050";                  NODE="leaf1"  ;;
   09-l3out)          MARKER="neighbor 192.0.2.0";                NODE="leaf1"  ;;
-  11-multisite)      MARKER="multisite border-gateway";          NODE="bgw1"   ;;
+  10-multipod)       MARKER="neighbor 10.0.0.13";                NODE="spine1" ;;
+  11-multisite)      MARKER="multisite border-gateway";          NODE="spine1" ;;
   *)                 MARKER="";                                  NODE="leaf1"  ;;
 esac
 
@@ -348,11 +350,14 @@ L3OUT
   '
 
 SITE2
-    echo "Verify Multi-Site state:"
-    echo "  ssh admin@clab-vxlan-evpn-bgw1"
-    echo "  show bgp l2vpn evpn summary       # iBGP to spines + eBGP to bgw2"
-    echo "  show nve multisite dci-links"
-    echo "  show nve multisite fabric-links"
+    echo "Verify Multi-Site state (spine1 is the collapsed spine+BGW for Site1):"
+    echo "  ssh admin@clab-vxlan-evpn-spine1"
+    echo "  show bgp l2vpn evpn summary       # leaf RR clients + eBGP-EVPN to spine5 (Site2)"
+    echo "  show nve interface nve1 detail    # Multisite bgw-if loopback2 oper Up"
+    echo "  show ip route 10.0.2.200          # reachability to Site2 BGW VIP (via DCI OSPF)"
+    echo ""
+    echo "  # On leaf1, confirm the cross-site route has next-hop 10.0.2.100 (NOT 192.168.100.1):"
+    echo "  ssh admin@clab-vxlan-evpn-leaf1; show ip route 10.100.30.0/24 vrf Tenant-A"
     echo ""
     echo "Multi-Site tests (cross-site ping):"
     echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.30.10   # Site1 -> Site2"

@@ -4,7 +4,7 @@
 > From "I've heard the terms" to "I can design and troubleshoot multi-pod
 > and multi-site fabrics."
 
-![Status](https://img.shields.io/badge/status-building%20in%20public-blue)
+![Status](https://img.shields.io/badge/status-sessions%2000--11%20complete-success)
 ![Platform](https://img.shields.io/badge/platform-containerlab-orange)
 ![NOS](https://img.shields.io/badge/NOS-Cisco%20Nexus%209000v-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -52,31 +52,46 @@ This repo does it differently:
 | **Build order = reality** | Underlay first, then overlay control plane, then services on top. Same order a real deployment is built in.   |
 | **Why before how**       | Each session explains the problem we're solving and the alternatives we rejected before showing the config.   |
 | **Break it on purpose**  | Every session ends with break-it exercises: shut a link, remove a route, see what happens.                    |
-| **Reproducible**         | All labs run on the same 4-node fabric (2 spines, 2 leaves) plus 2 hosts. The topology stays; only configs change. |
+| **Reproducible**         | Sessions 1–7 run on the same 4-node base fabric (2 spines, 2 leaves) plus hosts — the topology stays, only configs change. Sessions 8–11 add nodes (external gear, extra pods, a second site) in self-contained topologies. |
 | **Mental model first**   | Each session opens with an analogy or picture so you hold the concept in your head while learning syntax.     |
 
 ## Session map
 
-| #   | Topic                            | What you'll build                                            | Status   |
-|:---:|----------------------------------|--------------------------------------------------------------|:--------:|
-| 00  | Prerequisites                    | Build the lab platform (GCP or local)                        | ✅ Ready |
-| 01  | Underlay (OSPF)                  | IP reachability between every device's loopback              | ✅ Ready |
-| 02  | Overlay (BGP EVPN)               | iBGP EVPN sessions, spines as route reflectors               | ✅ Ready |
-| 03  | L2VNI                            | Stretch one VLAN across leaves, host-to-host ping over VXLAN | ✅ Ready |
-| 04  | Anycast gateway + Symmetric IRB  | First-hop gateway on every leaf                              | 🚧 Soon  |
-| 05  | L3VNI                            | Inter-VRF routing across the fabric                          | 🚧 Soon  |
-| 06  | vPC                              | Dual-attach hosts to a pair of leaves                        | 🚧 Soon  |
-| 07  | Refactor: eBGP underlay          | Why production fabrics drop OSPF                             | 🚧 Soon  |
-| 08  | L2Out                            | Extend a VLAN to a legacy switch outside the fabric          | 🚧 Soon  |
-| 09  | L3Out                            | BGP peering with an external router                          | 🚧 Soon  |
-| 10  | Multi-Pod                        | Two pods connected via IPN                                   | 🚧 Soon  |
-| 11  | Multi-Site                       | Separate fabrics joined via BGW + DCI                        | 🚧 Soon  |
-| App | Flood-and-learn (reference)      | Why we don't use this anymore, but should know it            | 🚧 Soon  |
+Sessions 1–7 chain on one running base fabric (push config with
+`switch.sh`). Sessions 8–11 are **self-contained** — each boots its own
+topology fresh. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the
+exact bring-up of every session.
+
+| #    | Topic                            | What you'll build                                            | Model | Status   |
+|:----:|----------------------------------|--------------------------------------------------------------|:-----:|:--------:|
+| 00   | Prerequisites                    | Build the lab platform (GCP or local)                        |  —    | ✅ Ready |
+| 01   | Underlay (OSPF)                  | IP reachability between every device's loopback              |  A    | ✅ Ready |
+| 02   | Overlay (BGP EVPN)               | iBGP EVPN sessions, spines as route reflectors               |  A    | ✅ Ready |
+| 03   | L2VNI                            | Stretch one VLAN across leaves, host-to-host ping over VXLAN |  A    | ✅ Ready |
+| 04   | Anycast gateway + Symmetric IRB  | First-hop gateway on every leaf                              |  A    | ✅ Ready |
+| 05a  | Multi-VRF (Tenant-B)             | Second tenant, VRF isolation                                 |  A    | ✅ Ready |
+| 05b  | Route leak                       | Controlled inter-VRF leak via RT import                      |  A    | ✅ Ready |
+| 06a  | vPC base                         | Peer-link, peer-keepalive, vPC domain                        |  A    | ✅ Ready |
+| 06b  | vPC host bond                    | Dual-attach host with LACP bond                              |  A    | ✅ Ready |
+| 06c  | vPC + VXLAN                      | Shared VTEP — the keystone fix                               |  A    | ✅ Ready |
+| 07   | Refactor: eBGP underlay          | Why production fabrics drop OSPF (RFC 7938)                  |  A    | ✅ Ready |
+| 08   | L2Out                            | Extend a VLAN to a legacy switch outside the fabric          |  B    | ✅ Ready |
+| 09   | L3Out                            | BGP peering with an external router                          |  B    | ✅ Ready |
+| 10   | Multi-Pod                        | Two pods connected via IPN                                   |  B    | ✅ Ready |
+| 11   | Multi-Site                       | Separate fabrics joined via BGW + DCI                        |  B    | ✅ Ready |
+
+*Model A = chain on the base fabric (`deploy` once, then `switch.sh`).
+Model B = self-contained (`deploy` the session fresh). Full details in
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).*
 
 ## Topology
 
-Every session uses the same physical topology. A full-mesh 2-spine,
-2-leaf fabric with one host attached to each leaf:
+**Sessions 1–7** use the same physical topology — a full-mesh 2-spine,
+2-leaf fabric with one host attached to each leaf. **Sessions 8–11** keep
+this fabric as the core and add nodes around it (an external switch, an
+external router, extra pods, or a second site); see each session's doc
+and [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for those topologies. The
+base fabric:
 
 ```
             +--------+              +--------+
@@ -135,10 +150,11 @@ vxlan-evpn-zero-to-hero/
 ├── common/
 │   └── ipplan.md                      ← single IP/AS/VNI plan for the whole curriculum
 ├── docs/                              ← session-by-session teaching docs
+│   ├── DEPLOYMENT.md                  ← how to bring up every session (read this!)
 │   ├── 00-prerequisites.md
 │   ├── 01-underlay-ospf.md
 │   ├── 02-overlay-bgp-evpn.md
-│   └── ...
+│   └── ...                            ← through 11-multisite.md
 ├── labs/                              ← one folder per session
 │   ├── 01-underlay/
 │   │   ├── topology.clab.yml          ← containerlab topology file
@@ -151,7 +167,10 @@ vxlan-evpn-zero-to-hero/
 │   │   └── break-it.md                ← failure exercises with teaching points
 │   └── ...
 └── scripts/
-    ├── deploy.sh                      ← wrapper around containerlab deploy
+    ├── deploy.sh                      ← deploy a session's topology
+    ├── switch.sh                      ← push a session's configs onto running nodes
+    ├── deploy-final.sh                ← Session 11: push + host setup + smoke tests
+    ├── capture.sh                     ← tcpdump helper → .pcap for Wireshark
     └── reset.sh                       ← destroy + redeploy clean
 ```
 
@@ -186,7 +205,7 @@ ssh admin@clab-vxlan-evpn-spine1     # password: admin
 | Resource             | Minimum    | Recommended |
 |----------------------|------------|-------------|
 | Host CPU             | 8 vCPU     | 12+ vCPU    |
-| Host RAM             | 32 GB      | 48 GB       |
+| Host RAM             | 32 GB      | 48 GB (96 GB for Sessions 10–11) |
 | Host disk            | 60 GB      | 100 GB      |
 | Nested virtualization | **Required** — VXLAN labs need this. See [prerequisites](docs/00-prerequisites.md). |
 | Cisco N9000v image   | Get from cisco.com (CCO account required) |
@@ -213,12 +232,37 @@ And each session has a paired `docs/0X-topic.md` with:
 - **Design decisions** — why we picked X over Y
 - **What you should be able to explain** — self-check questions
 
+### Two bring-up models
+
+How you deploy depends on the session:
+
+- **Sessions 1–7 (Model A)** — all run on the **same base fabric**
+  (2 spines, 2 leaves, 2 hosts). Deploy it once with
+  `./scripts/deploy.sh 01-underlay`, then advance through sessions by
+  pushing config with `./scripts/switch.sh <session>`. No redeploy
+  between them; they chain.
+- **Sessions 8–11 (Model B)** — each adds new devices (external switch,
+  external router, extra pods, a second site), so each has its **own
+  self-contained topology**. Tear down the running lab, then
+  `./scripts/deploy.sh <session>` to bring the whole thing up fresh.
+
+The full per-session bring-up — which model, which topology, expected
+RAM, and the exact command sequence — lives in
+**[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**. Read it before deploying
+anything past Session 7.
+
 ## Status
 
-🚧 **Built in public, session by session.** Sessions are added as they
-are tested end-to-end on a real lab. The "Ready" status in the session
-map means the session has been deployed and verified at least once on
-a real GCP VM.
+✅ **Sessions 00–11 are complete and verified end-to-end** on a real GCP
+VM (Ubuntu 24.04, Cisco Nexus 9000v 10.5.x). Every session has been
+deployed, brought up, and tested — the "Ready" status in the session map
+means exactly that.
+
+The curriculum is built in public, and the hard-won debugging stories
+are documented honestly in each session's **Lessons from the build**
+section (the MTU mismatch in Session 10, the Multi-Site next-hop rewrite
+in Session 11, and more) — because the failures teach as much as the
+configs.
 
 Issues and PRs welcome — especially:
 
