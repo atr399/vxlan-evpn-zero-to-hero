@@ -22,3 +22,6 @@ clab-*/
 __pycache__/
 *.pyc
 scripts/_push.log
+# containerlab runtime artifacts
+labs/*/clab-vxlan-evpn/
+scripts/_push.log
