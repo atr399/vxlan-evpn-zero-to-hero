@@ -137,7 +137,125 @@ host literally does not notice it moved.
 > One MAC, used for every anycast IP, on every leaf. It's the same
 > MAC across the entire fabric — and that's the point.
 
+## The concepts that trip people up (read before the config)
+
+Session 4 introduces four ideas that interlock. Getting them straight
+here makes Sessions 5–11 much easier, because everything routed builds
+on these.
+
+### 1. Anycast gateway — same IP *and* same MAC on every leaf
+
+Every leaf hosts the *identical* gateway IP **and** the identical
+gateway MAC (`0000.2222.3333`) for a given subnet. A host's default
+gateway is therefore always one hop away, on its *own* leaf — traffic
+never trombones to a central router.
+
+The line that does it: `fabric forwarding mode anycast-gateway` on the
+SVI, plus a fabric-wide `fabric forwarding anycast-gateway-mac
+0000.2222.3333`. The MAC must be identical on every leaf — that's the
+one value that *cannot* drift (break-it covers what happens when it
+does).
+
+> **Why the same MAC matters:** if a host moves from leaf1 to leaf2
+> (vMotion, etc.), its ARP cache still has `0000.2222.3333` for the
+> gateway — and leaf2 answers to that exact MAC. No re-ARP, no gap. The
+> shared MAC is what makes mobility seamless.
+
+### 2. L2VNI vs L3VNI — two different jobs
+
+You now have both kinds of VNI on the wire:
+
+- **L2VNI** (10010, 10020): carries **bridged** frames between leaves
+  for hosts in the *same* subnet. Inner MACs are the real host MACs.
+- **L3VNI** (50001): carries **routed** packets between leaves for hosts
+  in *different* subnets. One L3VNI per VRF. Inner MACs are the anycast
+  gateway MAC (because the leaf routed, and routers rewrite L2).
+
+Same-subnet traffic → L2VNI. Cross-subnet traffic → L3VNI. The VNI in
+the VXLAN header tells you which happened, which is why the capture is
+worth doing: VNI 50001 in the header = "this was routed."
+
+### 3. Symmetric IRB — why the TTL drops by exactly 2
+
+IRB = Integrated Routing and Bridging (a leaf does both). The question
+is *where* the routing happens on a cross-subnet flow:
+
+- **Asymmetric IRB**: only the **ingress** leaf routes (into the
+  destination L2VNI); the egress leaf just bridges. The two directions
+  of a conversation take *different* VNIs — asymmetric. Needs every leaf
+  to have every destination VLAN configured. Doesn't scale well.
+- **Symmetric IRB** (what we use): **both** leaves route, through a
+  shared **L3VNI**. Ingress leaf routes from the source VLAN into the
+  L3VNI; egress leaf routes from the L3VNI into the destination VLAN.
+  Both directions use the *same* L3VNI — symmetric. Each leaf only needs
+  the VLANs of its *own* hosts.
+
+The visible proof: **TTL decrements by 2** end-to-end (one per leaf that
+routed). In your ping, `ttl=62` from a start of 64. The spine in the
+middle does **not** decrement the inner packet — it only IP-routes the
+outer VXLAN/UDP, so it doesn't touch the inner TTL. Two leaves route →
+two decrements → 62.
+
+### 4. Type-2 grows an IP, and Type-5 is born
+
+Two route-table changes happen the moment you add the gateway:
+
+- **Type-2 becomes MAC+IP.** In Session 3 the host's Type-2 was
+  MAC-only (`[0.0.0.0]` in the IP field) because there was no SVI to
+  learn its IP. Now the SVI exists, the leaf snoops the host's IP via
+  ARP, and re-advertises the **same** host as a MAC+**IP** Type-2. That
+  IP binding is what powers ARP suppression and host-route mobility.
+- **Type-5 appears — IP Prefix routes.** A leaf advertises its
+  *connected subnets* (10.100.10.0/24, 10.100.20.0/24) as **Type-5**
+  routes so remote leaves know "to reach this subnet, send to my VTEP."
+  Type-5 is how routing-by-prefix works across the fabric, and it only
+  shows up once you have routed VRFs.
+
+> **Type-2 vs Type-5, one line:** Type-2 = reach a specific **host**
+> (MAC, or MAC+IP). Type-5 = reach a **subnet/prefix**. Both can carry
+> "routed" info, but Type-2 is host-granular and Type-5 is
+> prefix-granular.
+
+### Why `redistribute direct` is required (the bug that bites everyone)
+
+Adding `advertise l2vpn evpn` under the VRF is **not enough** to get
+Type-5 routes. That command only *converts routes already in BGP's IPv4
+table* into EVPN. By default BGP does **not** auto-pull the connected
+SVI subnets — so the IPv4 table is empty, and Type-5 count stays at 0,
+and cross-subnet ping fails.
+
+The fix is **both** lines:
+
+```
+vrf Tenant-A
+  address-family ipv4 unicast
+    redistribute direct route-map ALL_ROUTES   ! pulls connected subnets INTO bgp
+    advertise l2vpn evpn                         ! converts them to Type-5 EVPN
+```
+
+`redistribute direct` puts the connected subnets into BGP; `advertise
+l2vpn evpn` then exports them as Type-5. Miss the first line and you get
+a silent, confusing failure — this was a real first-deploy bug in this
+lab, now documented so you don't repeat it.
+
+### What `advertise-pip` is for
+
+With anycast gateway, *every* leaf shares the gateway IP — so when a
+leaf originates a Type-5 route, what next-hop does it use? If it used the
+anycast VTEP IP, remote leaves couldn't tell *which physical leaf* to
+send to. `advertise-pip` (Primary IP) tells the leaf to use its **own
+unique** loopback1 VTEP IP as the Type-5 next-hop, not the shared
+anycast IP — so prefix routes point at a specific leaf. Becomes
+essential with vPC (Session 6), where two leaves share a VTEP VIP.
+
+---
+
 ## Design decisions in this session
+
+> The conceptual *why* for redistribute, advertise-pip, and ARP
+> suppression is in **"The concepts that trip people up"** above. The
+> decisions below focus on the **exact config** for each.
+
 
 ### Decision 1: VRF for tenant traffic
 
@@ -316,24 +434,55 @@ anycast MAC `00:00:22:22:33:33`.
 
 **Second moment**: host1 pings host2. Crossing subnets, crossing leaves.
 
-In one VS Code terminal, start a capture on leaf1's uplink:
+> **Capture gotcha — pick the right uplink (this will bite you).** leaf1
+> has **two** uplinks: `eth1` to spine1 and `eth2` to spine2. The
+> underlay is ECMP, so a given VXLAN flow hashes to **one** of them and
+> stays there. If you capture on `eth1` but the flow hashed to spine2,
+> your pcap will be **empty of VXLAN** even though the ping works
+> perfectly — you'll only see OSPF/BGP control traffic on that link.
+> This is *not* a timing or Ctrl-C problem; the traffic is simply on the
+> other wire. The fix: capture on the uplink the flow actually uses, or
+> capture both `eth1` and `eth2` at once (two terminals) — one will have
+> it.
+
+**Correct sequence (two terminals).** The capture must be running and
+waiting *before* the ping starts:
 
 ```bash
-./scripts/capture.sh leaf1 eth1 04-anycast-cross-subnet 'udp port 4789'
+# Terminal 1 - start the capture, then LEAVE IT (do not Ctrl-C yet).
+# Try eth2 first; if it comes up empty, repeat with eth1.
+./scripts/capture.sh leaf1 eth2 04-anycast-cross-subnet 'udp port 4789'
 ```
 
-In another terminal:
-
 ```bash
+# Terminal 2 - now that the capture is waiting, fire the ping:
 docker exec clab-vxlan-evpn-host1 ping -c 5 10.100.20.10
 ```
+
+Then return to Terminal 1 and Ctrl-C the capture (5 pings = 10 packets,
+below the 50-packet auto-stop). Confirm it caught VXLAN before opening
+Wireshark:
+
+```bash
+tcpdump -r ~/vxlan-evpn-zero-to-hero/pcaps/04-anycast-cross-subnet-*.pcap -nn | head
+# want lines like: 10.0.1.21.xxxxx > 10.0.1.22.4789   (VTEP-to-VTEP, VXLAN)
+```
+
+> If `tcpdump` is "not found" on the VM host, `sudo apt install -y
+> tcpdump` once. The capture itself runs inside the node and works
+> regardless of whether the host has tcpdump.
 
 If everything works:
 - The first packet may be lost (ARP resolution); subsequent ones succeed
 - TTL of the replies is 62 (started at 64, decremented by 2 — one
-  decrement per leaf doing L3 routing)
-- The capture has VXLAN frames with **VNI 50001** (the L3VNI), not
-  10010 or 10020. That's symmetric IRB.
+  decrement per leaf doing L3 routing). **TTL 62 is your symmetric-IRB
+  proof.**
+- The capture has VXLAN frames with **VNI 50001** (the L3VNI), not 10010
+  or 10020
+- Inside the VXLAN, the **inner source and destination MACs are both the
+  anycast gateway MAC** `0000.2222.3333` — the original host MACs are
+  gone. That rewrite is the visual proof the leaf *routed* the packet
+  (routers rewrite L2 headers; bridges don't).
 
 ## What to verify
 
@@ -342,6 +491,51 @@ See [`labs/04-anycast-gw/verify.md`](../labs/04-anycast-gw/verify.md).
 ## What to break
 
 See [`labs/04-anycast-gw/break-it.md`](../labs/04-anycast-gw/break-it.md).
+
+## Quick review (flashcards)
+
+Cover the right column. Builds on Session 3's set with the routing
+concepts.
+
+### Anycast gateway and IRB
+
+| Question | Answer |
+|----------|--------|
+| What is an anycast gateway? | The **same gateway IP *and* MAC on every leaf** for a subnet, so a host's gateway is always on its own leaf — no tromboning to a central router. |
+| Which two things must match across all leaves? | The anycast **IP** (per subnet) and the anycast **MAC** (`0000.2222.3333`, fabric-wide). The MAC must never drift. |
+| Why does the shared anycast MAC enable host mobility? | A moved host's ARP cache still has `0000.2222.3333`; the new leaf answers to that exact MAC — no re-ARP, no gap. |
+| L2VNI vs L3VNI? | **L2VNI** bridges same-subnet frames (inner MACs = real hosts). **L3VNI** carries routed cross-subnet packets (inner MACs = anycast gateway MAC). One L3VNI per VRF. |
+| What is symmetric IRB? | **Both** leaves route, via a shared **L3VNI** — ingress routes source-VLAN→L3VNI, egress routes L3VNI→dest-VLAN. Same VNI both directions. |
+| Asymmetric vs symmetric IRB? | Asymmetric: only ingress leaf routes, needs every dest VLAN everywhere, doesn't scale. Symmetric: both leaves route via L3VNI, each leaf only needs its own VLANs. |
+| Why does cross-subnet TTL drop by exactly 2? | Two leaves route the packet (one decrement each). The spine only IP-routes the outer VXLAN/UDP and never touches the inner TTL. Start 64 → 62. |
+| What does TTL=62 prove? | **Symmetric IRB is working** — both leaves performed L3 routing. |
+
+### Routes and advertisement
+
+| Question | Answer |
+|----------|--------|
+| How does Type-2 change when you add the gateway? | It goes from **MAC-only** (Session 3) to **MAC+IP** — the SVI lets the leaf snoop the host IP and advertise the IP→MAC binding. |
+| What is a Type-5 route? | An **IP Prefix route** — advertises a connected subnet so remote leaves know which VTEP to send to for that prefix. Appears only with routed VRFs. |
+| Type-2 vs Type-5? | Type-2 = reach a specific **host** (MAC or MAC+IP). Type-5 = reach a **subnet/prefix**. |
+| Why is `advertise l2vpn evpn` alone not enough for Type-5? | It only converts routes *already in BGP's IPv4 table*. By default connected SVI subnets aren't there, so Type-5 stays at 0. |
+| What fixes that? | Add `redistribute direct route-map ALL_ROUTES` — it pulls connected subnets **into** BGP; then `advertise l2vpn evpn` exports them as Type-5. Both lines required. |
+| What does `advertise-pip` do? | Makes a leaf use its **own unique loopback1 VTEP IP** (Primary IP) as the Type-5 next-hop instead of the shared anycast IP, so prefix routes point at a specific physical leaf. Essential with vPC. |
+
+### Config lines and verification
+
+| Question | Answer |
+|----------|--------|
+| Which line makes an SVI an anycast gateway? | `fabric forwarding mode anycast-gateway` on the SVI (plus the fabric-wide `fabric forwarding anycast-gateway-mac`). |
+| In a cross-subnet capture, which VNI appears? | The **L3VNI 50001**, not the L2VNIs (10010/10020). |
+| In that capture, what are the inner source/dest MACs? | **Both the anycast gateway MAC** `0000.2222.3333` — proof the leaf routed (routers rewrite L2; bridges don't). |
+| Capture shows ping works but pcap is empty of VXLAN — why? | ECMP hashed the flow to the **other uplink**. Capture the uplink the flow uses, or capture both `eth1` and `eth2`. |
+| How do you see Type-5 routes on a leaf? | `show bgp l2vpn evpn route-type 5` — expect one per connected subnet, originated locally and learned from the remote leaf. |
+
+> ARP suppression (from Session 3's cards) becomes fully real here —
+> it's the MAC+IP Type-2 routes created in this session that let a leaf
+> answer ARP locally.
+
+---
 
 ## What you should be able to explain
 
@@ -355,6 +549,12 @@ See [`labs/04-anycast-gw/break-it.md`](../labs/04-anycast-gw/break-it.md).
 6. What's the role of `redistribute direct` and why is it needed even
    when `advertise l2vpn evpn` is already there?
 7. What does `advertise-pip` do?
+8. How does a host's Type-2 route change between Session 3 and Session 4,
+   and how do you spot it in `show` output?
+9. In a cross-subnet capture, which VNI appears and what are the inner
+   MACs — and why does that prove the leaf routed?
+10. If your ping works but the pcap has no VXLAN, what's the most likely
+    cause and the fix?
 
 ## Lessons from initial lab testing
 
