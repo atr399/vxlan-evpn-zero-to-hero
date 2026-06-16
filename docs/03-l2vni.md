@@ -113,52 +113,242 @@ to deliver the unwrapped frame to (back to VLAN 10).
 > people keep them matching because it's confusing otherwise, but the
 > mechanism doesn't require it.
 
+## The two big concepts (read this before the config)
+
+This session is where two ideas get conflated by almost everyone
+learning VXLAN-EVPN. They are **two independent questions**, and keeping
+them apart is the single most useful thing you can take from Session 3.
+
+### Question 1 — How do leaves learn where MACs live? (control plane)
+
+This is the **flood-and-learn vs BGP-EVPN** axis.
+
+- **Flood-and-learn**: there is *no control plane*. A leaf learns a
+  remote MAC only when it actually *receives traffic* from that MAC
+  (data-plane learning, exactly like a traditional switch). To reach a
+  MAC it hasn't learned yet, it floods and waits to learn from the
+  reply. This is the legacy 2012-era behaviour.
+
+- **BGP-EVPN**: a real control plane. Each leaf **advertises** its local
+  MACs (and optionally IPs) to every other leaf via BGP **Type-2**
+  routes, *before any traffic flows*. Learning happens in advance, in
+  the control plane. No flooding needed to *learn* a location.
+
+The single config line that selects this is `host-reachability protocol
+bgp` under `interface nve1`. Present → BGP-EVPN. Absent → flood-and-learn.
+
+> **ARP suppression is a bonus that rides on BGP-EVPN.** Because the
+> leaf already learned every host's IP→MAC from Type-2 routes, when a
+> host broadcasts an ARP ("who has 10.100.10.11?"), the leaf can look up
+> that **IP** in its Type-2 table and answer **locally** with the MAC —
+> the ARP never crosses the fabric. On a miss (a genuinely unknown
+> host), it falls back to flooding. This is *why* BGP-EVPN shrinks
+> flooding, but note it's keyed on the IP being asked about and answered
+> from Type-2 — not a destination-MAC lookup.
+
+### Question 2 — When you *must* flood, how is the copy made? (data plane)
+
+This is the **multicast vs ingress-replication** axis. It exists because
+*even with BGP-EVPN*, some traffic still has to reach every VTEP in a
+VNI: broadcast, **u**nknown unicast, and **m**ulticast — collectively
+**BUM** traffic. BGP-EVPN shrinks BUM (via ARP suppression) but never
+eliminates it. So every fabric needs a way to physically replicate a
+flooded frame to all VTEPs:
+
+- **Multicast (PIM)**: the ingress leaf sends **one** copy to a
+  multicast group; the underlay (PIM) clones it to the members. Leaves
+  join the group via the underlay's own multicast machinery.
+
+- **Ingress replication (IR)**: the ingress leaf makes **N** unicast
+  copies itself, one per remote VTEP, and sends them individually. No
+  multicast in the underlay.
+
+The config line that selects this is `ingress-replication protocol bgp`
+(vs a `mcast-group` statement) under the VNI in `interface nve1`.
+
+### Why they're independent — the part that confuses everyone
+
+The two questions answer different problems, so **any combination is
+valid**:
+
+| Control plane (Q1) | BUM replication (Q2) | What it is |
+|---|---|---|
+| Flood-and-learn | Multicast | The original VXLAN, RFC 7348 (2014) |
+| Flood-and-learn | Ingress replication | Valid but rare — IR with a **manually typed** VTEP list |
+| **BGP-EVPN** | **Ingress replication** | **This lab** — IR list comes from Type-3 routes |
+| BGP-EVPN | Multicast | Common in large, multicast-heavy fabrics |
+
+A useful way to picture it: the control plane is your **address book**
+(do you have one, or do you learn names only when mail arrives?), and
+BUM replication is your **copy method** (does the post office hand-copy a
+flyer for every address, or does the highway clone it for you?):
+
+```
+                    Multicast (PIM)            Ingress replication
+                    highway clones it          leaf hand-copies, 1 per VTEP
+                 +--------------------------+--------------------------+
+  Flood-and-learn| Original VXLAN (2014):   | Rare: no address book,   |
+  no address book| no address book, highway | leaf hand-copies to a    |
+                 | clones the flood         | MANUALLY typed VTEP list |
+                 +--------------------------+--------------------------+
+  BGP-EVPN       | Common at scale: perfect | THIS LAB: perfect address|
+  address book   | address book, highway    | book; for the rare flyer |
+  (Type-2)       | clones the flood         | leaf hand-copies, VTEP   |
+                 |                          | list learned via Type-3  |
+                 +--------------------------+--------------------------+
+```
+
+**The only thing BGP-EVPN changes about ingress replication** is *where
+the VTEP list comes from*: in pure flood-and-learn IR you type each
+remote VTEP IP by hand; with BGP-EVPN the list is learned automatically
+from **Type-3** routes. Ingress replication existed *before* EVPN — EVPN
+just gave it a nicer way to discover the list. That's why the flavour
+isn't "owned" by BGP-EVPN: it's a data-plane mechanism that predates the
+control plane now driving it.
+
+Two independent switches under `interface nve1`, matching the two
+questions:
+
+```
+interface nve1
+  host-reachability protocol bgp        <- Q1: BGP-EVPN control plane
+  member vni 10010
+    ingress-replication protocol bgp     <- Q2: IR for BUM (vs mcast-group)
+```
+
+---
+
+## The EVPN route types you'll actually see
+
+BGP-EVPN carries several route *types*. In this session you meet two;
+the others arrive in later sessions. Knowing what each carries — and
+what it does **not** — is most of the battle.
+
+### Type-2 — MAC (and optionally MAC+IP) advertisement
+
+"Here is a host that lives behind me." This is the address-book entry.
+
+- **In this session (pure L2VNI, no gateway)** Type-2 routes carry a
+  **MAC only** — there's no SVI yet, so the leaf has no IP binding to
+  advertise. You'll see the host MAC, the L2VNI (10010), and the
+  originating VTEP, but the IP field is empty.
+- **From Session 4 onward (anycast gateway added)** the *same* host's
+  Type-2 becomes a **MAC+IP** route — once an SVI exists and the leaf
+  learns the host's IP via ARP, it advertises the IP→MAC binding too.
+  That MAC+IP route is what makes ARP suppression and Session 4's
+  routing possible.
+
+Reading one (this session, MAC-only):
+
+```
+show bgp l2vpn evpn route-type 2
+```
+
+```
+   Route Distinguisher: 10.0.0.21:32777        (leaf1's RD for this VNI)
+   *>i[2]:[0]:[0]:[48]:[aaaa.bbbb.cccc]:[0]:[0.0.0.0]/216
+                      ^MAC length        ^MAC          ^IP = 0.0.0.0 -> MAC-only
+                      next hop 10.0.1.21  (the originating VTEP, loopback1)
+```
+
+The `[0.0.0.0]` IP field is the tell: **MAC-only**. After Session 4 the
+same route shows a real IP there.
+
+### Type-3 — "I am a VTEP for this VNI, send me BUM"
+
+This is the **ingress-replication** mechanism. It carries **no host
+info** — no MAC, no IP. It's purely each leaf announcing "I participate
+in VNI 10010; include me when you replicate flood traffic." The ingress
+leaf collects all the Type-3 routes for a VNI to build its
+unicast-copy list.
+
+Reading one:
+
+```
+show bgp l2vpn evpn route-type 3
+```
+
+```
+   Route Distinguisher: 10.0.0.22:32777
+   *>i[3]:[0]:[32]:[10.0.1.22]/88
+                    ^the originating VTEP IP (leaf2's loopback1)
+```
+
+That's it — a VNI and a VTEP IP. Every leaf in VNI 10010 originates one.
+If you run multicast instead of IR, you would **not** see Type-3 doing
+this job — group membership is handled by PIM in the underlay, not by
+Type-3. (Type-3 carrying a multicast group is a different, PMSI-tunnel
+case beyond this curriculum.)
+
+> **Quick contrast to lock it in:** Type-2 = "*who* is behind me"
+> (address book). Type-3 = "*include me* when you flood" (copy list).
+> Different jobs, different routes.
+
+### RD and RT — what they're for (with the use case)
+
+Every EVPN route carries a **Route Distinguisher** and one or more
+**Route Targets**. They sound similar and do completely different jobs.
+
+**Route Distinguisher (RD) — makes otherwise-identical routes unique.**
+
+Picture two leaves that each have a host at MAC `aaaa.bbbb.cccc` in VLAN
+10 (rare, but legal — and *guaranteed* once you have overlapping tenants
+in Session 5). Without an RD, both advertise the *same* EVPN prefix and
+BGP treats them as one route — it can't tell the two apart, and one
+host becomes unreachable. The RD prefixes each leaf's routes with a
+per-leaf, per-VNI identifier (`router-id:VNI`, e.g.
+`10.0.0.21:32777`), so the two routes stay distinct in the BGP table.
+**RD is about uniqueness, not policy.** It does not decide who imports
+anything.
+
+**Route Target (RT) — decides who imports the route.**
+
+The RT is a tag that says "this route belongs to community X." A leaf
+imports a route only if it's configured to import that RT. For a
+stretched L2VNI, every leaf exports **and** imports the *same* RT
+(`ASN:VNI`, e.g. `65000:10010`), which is what makes them share the
+VNI's routes. **RT is the policy knob** — it's how, in Session 5b, you
+deliberately leak routes between two VRFs: you import the *other* VRF's
+RT. Same mechanism, used on purpose.
+
+The shortcut you'll see in the config:
+
+```
+evpn
+  vni 10010 l2
+    rd auto                      ! derive RD from router-id + VNI
+    route-target both auto        ! export and import the same RT, derived
+```
+
+`auto` just lets the device generate both from the router-id, ASN, and
+VNI deterministically — fine for a single-AS fabric. You hardcode them
+when you need cross-AS or custom import policy (Session 7's eBGP
+underlay and Session 5b's route leak are where `auto` stops being
+enough).
+
+> **One-line memory hook:** RD keeps routes *distinct* (uniqueness); RT
+> decides who *imports* them (policy). RD never affects import; RT never
+> affects uniqueness.
+
+---
+
 ## Design decisions in this session
 
-### Decision 1: BGP-based ingress replication, not multicast
+### Decision 1: BGP ingress replication, not multicast
 
-VXLAN needs to handle **BUM traffic** — Broadcast, Unknown unicast,
-Multicast. When host1 ARPs for an unknown MAC, that ARP has to reach
-every VTEP that might have the target.
+See **"The two big concepts"** above for the full flood-and-learn vs
+BGP-EVPN and multicast vs ingress-replication breakdown. The short
+version: this lab uses **BGP-EVPN** as the control plane and **ingress
+replication** for BUM, so no PIM is required anywhere. You'll see Type-3
+routes appear — that's the IR VTEP-discovery mechanism in action.
 
-Two approaches:
-- **Multicast underlay**: use IP multicast (PIM) so one packet from
-  leaf1 reaches all leaves. Efficient, but requires running PIM
-  everywhere — extra complexity, harder to troubleshoot.
-- **Ingress replication (IR)**: leaf1 sends a unicast copy of the BUM
-  packet to *each* known remote VTEP. BGP-EVPN distributes the list of
-  remote VTEPs via Type-3 routes. Simple, no multicast required.
+### Decision 2: RD and RT
 
-We use **ingress replication with BGP** — the standard modern choice
-and what the curriculum's intro promised ("no flood and learn, BGP
-replication").
-
-You'll see Type-3 EVPN routes appear in this session — those are the
-"hi, I'm a VTEP, here's my IP" messages each leaf sends so others know
-to replicate BUM traffic to them.
-
-### Decision 2: RD and RT are required, here's why
-
-Every L2VNI on every leaf needs two attributes attached:
-
-- **Route Distinguisher (RD)**: makes routes unique across the fabric.
-  Two leaves might both have a host at MAC `aaaa.bbbb.cccc` in VLAN 10
-  (rare but possible). Without an RD, BGP can't tell them apart. With
-  an RD, each leaf prefixes its routes with its own identifier.
-  Format: `loopback0-IP:VNI` (e.g., `10.0.0.21:10010`).
-- **Route Target (RT)**: controls which VRFs/VNIs *import* this route.
-  Two leaves can have the same RT on their L2VNI 10010 configs, which
-  means "share routes with each other." Format: `ASN:VNI` (e.g.,
-  `65000:10010`).
-
-Cisco gives us a convenient shortcut: `rd auto` and `route-target
-both auto`. The device generates the RD from its own router-id and
-the VNI, and uses a deterministic RT format. We'll use these to keep
-configs short.
-
-> **Why "both auto"**: RTs can be configured separately for
-> import/export, but for symmetric L2VNI we want the same RT both
-> directions. `both auto` does that.
+See **"RD and RT — what they're for"** above for the use cases. The
+short version: **RD** keeps otherwise-identical routes *distinct*
+(uniqueness), **RT** decides who *imports* a route (policy). We use `rd
+auto` and `route-target both auto` to derive both from the router-id and
+VNI — fine for this single-AS fabric.
 
 ### Decision 3: NVE interface sourced from loopback1
 
@@ -304,15 +494,78 @@ Highlights:
 - Bring an extra host MAC onto leaf1 and watch the EVPN Type-2 route
   for it appear in real time
 
+## Quick review (flashcards)
+
+Self-test before moving on. Cover the right column. These cover the
+concepts above plus a few NX-OS specifics you'll meet again in later
+sessions.
+
+### Concepts
+
+| Question | Answer |
+|----------|--------|
+| BGP-EVPN vs flood-and-learn? | BGP-EVPN is the **control plane** — leaves learn MACs/IPs via BGP *before* traffic flows. Flood-and-learn has *no* control plane: a leaf learns a MAC only when traffic from it arrives. |
+| Ingress replication vs PIM/multicast? | Both are **data-plane** choices for BUM traffic. Ingress replication = the ingress leaf makes individual unicast copies, one per VTEP. Multicast = the underlay (PIM) replicates the packet. |
+| Are those two axes related? | **No — independent.** Any combination is valid. This lab = BGP-EVPN + ingress replication. |
+| Which NX-OS line selects the control plane? | `host-reachability protocol bgp` under `interface nve1`. Present → BGP-EVPN; absent → flood-and-learn. |
+| Which NX-OS line selects the BUM method? | `ingress-replication protocol bgp` (vs a `mcast-group` statement) under the VNI. |
+
+### EVPN route types
+
+| Question | Answer |
+|----------|--------|
+| What is a Type-2 route? | The **host list**. Advertises a specific host's MAC, and *optionally* its IP. |
+| What is a Type-3 route? | The **switch list** (Inclusive Multicast Route). Advertises "this leaf participates in this VNI" — tells others where to send flood traffic. Carries no host info. |
+| Type-2 with IP length `[0]` and `[0.0.0.0]`? | A **MAC-only route** — the leaf knows the host's MAC but hasn't learned its IP yet. (Becomes MAC+IP once an SVI exists and the leaf snoops the IP — Session 4.) |
+| Which BUM method generates Type-3? | **Ingress replication.** Multicast does *not* use Type-3 for this — group membership is handled by PIM in the underlay. |
+
+### RD and RT
+
+| Question | Answer |
+|----------|--------|
+| Purpose of the Route Distinguisher (RD)? | The **license plate** — makes a route *mathematically unique* in the BGP table so overlapping MACs/IPs across leaves don't collide. Does **not** affect import. |
+| Purpose of the Route Target (RT)? | The **GPS destination** — controls import/export, telling the receiving leaf which local VNI/VRF table to install the route into. This is the *policy* knob (and how Session 5b leaks routes). |
+| Why does an auto RD start with the switch's loopback/router-id? | To guarantee **global uniqueness** — no two switches share a router-id, so no two can generate the same RD. |
+| NX-OS auto-RD numbering field for an L2VNI? | The 2-byte field = **32767 + VLAN ID** (VLAN 10 → 32777), appended to the router-id. Full RD e.g. `10.0.0.21:32777`. Note it's derived from the **VLAN ID**, not the VNI. |
+| NX-OS auto-RT format? | `ASN:VNI` (e.g. `65000:10010`) — ASN as the 2-byte field, VNI as the 4-byte field. |
+
+### NX-OS commands and verification
+
+| Question | Answer |
+|----------|--------|
+| What does `host-reachability protocol bgp` do? | Master switch for **BGP-EVPN control-plane learning** — the VNI distributes local host MAC/IP via BGP, which is what *produces* Type-2 routes. (The Type-2 routes are the effect; this command is the cause.) |
+| What does `ingress-replication protocol bgp` do? | Selects **unicast copies** for BUM (instead of underlay multicast) and triggers generation of the **Type-3** switch-list route. |
+| In `show nve peers`, what does LearnType `CP` mean? | **Control Plane** — the remote VTEP was learned via a BGP **Type-3** route, not via data-plane flooding. |
+| What does `suppress-arp` on a VNI do? | The leaf stops blindly flooding ARP. It intercepts the request, **answers locally** from its BGP/Type-2 database, and learns the sender's IP (helping generate MAC+IP Type-2 routes). |
+| Which ARP field does the leaf check for suppression? | The **Target IP** — looked up against the Type-2 database to find the owning MAC. |
+| What does `ip arp synchronize` do? (vPC, Session 6) | Copies locally-learned ARP entries across the peer-link so **both vPC leaves advertise the same MAC+IP Type-2 route** to the fabric. |
+
+> A few of these (suppress-arp, `ip arp synchronize`, MAC+IP Type-2)
+> only fully apply once you have an anycast gateway (Session 4) or vPC
+> (Session 6). They're here so the review set stays complete as you
+> progress — come back after those sessions and they'll click.
+
+---
+
 ## What you should be able to explain after this session
 
 1. What is an L2VNI and how does VLAN-to-VNI mapping work?
-2. What is a Type-2 EVPN route and what does it contain?
-3. What is a Type-3 EVPN route and why is it needed?
-4. What is ingress replication and why did we pick it over multicast?
-5. What does `host-reachability protocol bgp` actually do?
-6. Why don't the spines need any config changes in this session?
-7. When host1 pings host2, trace the packet's full path including
+2. The two independent axes: flood-and-learn vs BGP-EVPN (control
+   plane) **and** multicast vs ingress-replication (BUM). Why are they
+   independent, and which does this lab use?
+3. What does a Type-2 route carry in *this* session (MAC-only), and how
+   does that change in Session 4 (MAC+IP)? How do you spot the
+   difference in `show` output?
+4. What does a Type-3 route carry, and which BUM method does it serve?
+   (And which method does *not* use Type-3?)
+5. RD vs RT: which one is about uniqueness and which is about import
+   policy? Give the use case for each.
+6. How does ARP suppression use Type-2, and what is it keyed on (IP or
+   MAC)? What happens on a miss?
+7. What does `host-reachability protocol bgp` actually do, and which
+   line selects ingress-replication vs multicast?
+8. Why don't the spines need any config changes in this session?
+9. When host1 pings host2, trace the packet's full path including
    encapsulation/decapsulation steps.
 
 ## Next
