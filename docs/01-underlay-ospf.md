@@ -39,6 +39,11 @@ running lab with `./scripts/switch.sh 02-overlay`.
 
 ## Topology (this session)
 
+![Session topology diagram](../diagrams/01-underlay.svg)
+
+*(Rendered diagram above; the ASCII version below is the text fallback.)*
+
+
 ```
       +----------------+            +----------------+
       |     spine1     |            |     spine2     |

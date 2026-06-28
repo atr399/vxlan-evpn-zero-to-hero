@@ -36,6 +36,11 @@ debug inside that window — wait, then run the tests below.
 
 ## Topology (this session)
 
+![Session topology diagram](../diagrams/07-ebgp-underlay.svg)
+
+*(Rendered diagram above; the ASCII version below is the text fallback.)*
+
+
 No physical change — pure protocol refactor. The ASN map replaces
 OSPF + single-AS iBGP:
 
@@ -197,7 +202,12 @@ Both should show 2 neighbors in Established state.
 docker exec clab-vxlan-evpn-host1 ping -c 3 10.200.10.10
 ```
 
-Same outcome as Session 6: TTL=62 or 63, low loss.
+Same outcome as Session 6: **TTL=63** for this cross-tenant (route-leak)
+path, low loss (first packet may drop to ARP). Note this is host1
+(Tenant-A) reaching host2 (Tenant-B) — there is no second Tenant-A host
+to test same-tenant cross-subnet against, so the cross-tenant ping is
+the end-to-end proof. It exercises anycast gateway + symmetric IRB +
+the Session 5b route-leak + host1's vPC, all over the new eBGP underlay.
 
 ### Test 4: vPC unchanged
 

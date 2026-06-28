@@ -45,6 +45,11 @@ intended teaching flow.
 
 ## Topology (this session)
 
+![Session topology diagram](../diagrams/05-multivrf.svg)
+
+*(Rendered diagram above; the ASCII version below is the text fallback.)*
+
+
 Same physical wiring. What's new: a second VRF with its own L3VNI —
 two parallel routing planes on the same fabric:
 

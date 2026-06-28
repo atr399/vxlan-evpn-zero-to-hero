@@ -39,6 +39,11 @@ No host setup needed — overlay control plane only, no VNIs yet.
 
 ## Topology (this session)
 
+![Session topology diagram](../diagrams/02-overlay.svg)
+
+*(Rendered diagram above; the ASCII version below is the text fallback.)*
+
+
 Same physical wiring as Session 1. What's new is the **control-plane
 overlay** — iBGP-EVPN sessions, loopback-sourced, with the spines as
 route reflectors:
