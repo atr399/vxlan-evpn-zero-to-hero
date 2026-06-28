@@ -225,53 +225,97 @@ because that's the physical port to host1's second NIC.)
 
 **On host1** (Linux bonding via sysfs):
 
+> **Paste this exactly once, with NO inline comments.** When the
+> `switch.sh` hint or this doc shows `# comments` inside the bond block,
+> strip them before pasting into `docker exec ... sh -c '...'` — a `#`
+> comment that contains a `)` (e.g. "set mode (Alpine quirk)") will
+> break the single-quoted shell string with `syntax error near
+> unexpected token ')'`. And if a paste errors partway, **do not blindly
+> re-run it** — repeated half-runs thrash the links and can
+> error-disable the leaf member port (see "Lab hygiene"). Fix the
+> command, then run the clean block once:
+
 ```bash
-# Create bond0 in LACP mode
+docker exec clab-vxlan-evpn-host1 sh -c '
+ip link set bond0 down 2>/dev/null
+ip link delete bond0 2>/dev/null
 ip link add bond0 type bond
 echo 802.3ad > /sys/class/net/bond0/bonding/mode
 echo fast > /sys/class/net/bond0/bonding/lacp_rate
 echo 100 > /sys/class/net/bond0/bonding/miimon
-
-# Enslave eth1 and eth2 to bond0
+ip link set eth1 down
+ip link set eth2 down
+ip addr flush dev eth1
+ip addr flush dev eth2
 ip link set eth1 master bond0
 ip link set eth2 master bond0
-
-# Bring up + assign IP to bond0
+ip link set eth1 up
+ip link set eth2 up
 ip link set bond0 up
 ip addr add 10.100.10.10/24 dev bond0
 ip route replace default via 10.100.10.1
+'
 ```
 
 The sysfs approach is needed because Alpine's `ip link add bond0
 type bond mode 802.3ad` doesn't reliably apply the mode parameter.
 
+Verify the bond formed cleanly — **both slaves up and in the same
+Aggregator ID** is the tell that LACP negotiated correctly end-to-end:
+
+```bash
+docker exec clab-vxlan-evpn-host1 cat /proc/net/bonding/bond0 | grep -E "MII Status|Slave Interface|Aggregator ID"
+# want: both eth1 and eth2 "up", both showing the SAME Aggregator ID
+```
+
 ### What 6b reveals — the consistency failure
 
-After applying 6b, you'll see something surprising:
+After applying 6b and bringing up the host bond, you'll see something
+surprising:
 
 ```
 show vpc
-
-vPC 10: status down*
-Reason: Global compat check failed
+```
+```
+Configuration consistency status  : failed
+Configuration inconsistency reason: Secondary IP address does not match
+...
+10    Po10    down*    success    success    -
 ```
 
-The LACP bond is up on the host. The vPC peer adjacency is up.
-But the vPC member port (Po10) refuses to forward. **Why?**
+The LACP bond is up on the host. The vPC peer adjacency is up
+("peer adjacency formed ok", "peer is alive"). But the vPC member port
+(Po10) refuses to forward. **Why?**
 
-Cisco's NX-OS treats certain vPC consistency checks as hard
-prerequisites: if **any global parameter mismatches** between the
-two leaves, no vPC member ports come up.
+NX-OS treats the **vPC VTEP secondary IP** as a Type-1 consistency
+parameter: both leaves of a vPC pair must present the *same* secondary
+(VIP) IP on their VXLAN source loopback, because to the rest of the
+fabric a vPC pair must look like **one** logical VTEP. At this point
+neither leaf has that secondary IP configured, so the check reports
+**"Secondary IP address does not match"** and holds the vPC member port
+down.
 
-Running:
-```
-show vpc consistency-parameters global
-```
+> **The exact reason string matters.** The headline `show vpc` line
+> says `Configuration consistency status : failed` with
+> `Configuration inconsistency reason: Secondary IP address does not
+> match`. That string is the precise, specific cause — not a generic
+> "compat check." It tells you exactly what 6c must fix.
 
-...reveals: `Nve1: Sec IP: 0.0.0.0` on both leaves. The check
-"do you have a matching vPC VIP?" returns false because **neither**
-leaf has a VIP. NX-OS interprets this as a failure rather than
-"both same" (a behavior quirk in 10.5.x).
+**The member-port reason cascades — don't be fooled by it.** Depending
+on timing and whether the host bond is up yet, `show interface Eth1/3
+brief` may report the member port down for *different* reasons as you
+progress:
+
+| Member-port "Reason" | What it actually means |
+|----------------------|------------------------|
+| `suspended (no LACP PDUs)` | Host hasn't started LACP yet — run the host bond setup. |
+| `vpc peerlink is down` | The vPC *consistency* failure is holding the member down; the peer-link (Po100) is actually up. Misleading wording. |
+| `Internal-Fail errDisable` | The port got **error-disabled** — usually from manual link thrashing, *not* part of the lesson. See "Lab hygiene" below. |
+
+In **all** of these, the authoritative root cause is the `show vpc`
+**consistency line** (`Secondary IP address does not match`), not the
+per-port reason. Read `show vpc` first; treat the port reason as a
+symptom.
 
 **This is 6c's job to fix.**
 
@@ -356,6 +400,40 @@ this for chassis maintenance, hardware failures, software upgrades.
 
 ---
 
+## Quick review (flashcards)
+
+Cover the right column.
+
+### vPC fundamentals
+
+| Question | Answer |
+|----------|--------|
+| What problem does vPC solve? | Lets a host **dual-home to two leaves** with one LACP bond, so either leaf or link can fail without dropping the host — while both leaves stay active (no STP blocking). |
+| Peer-link vs peer-keepalive — why separate? | **Peer-link** (Po100) carries data + vPC control + sync; **peer-keepalive** is a separate L3 heartbeat used only to detect peer death and prevent dual-active. Separate links so a peer-link failure is distinguishable from a peer being down. |
+| Why LACP (not static) for the host bond? | LACP actively negotiates and detects half-open links; the leaf only bundles a member when it sees the partner's LACPDUs (`suspended (no LACP PDUs)` until then). |
+| Why does vPC + VXLAN need a shared VTEP IP? | The two leaves must look like **one logical VTEP** to the fabric. The shared secondary (VIP) IP on loopback1 makes EVPN advertise the pair as a single next-hop, so remote leaves don't see a host flapping between two VTEPs. |
+
+### The 6b failure and 6c fix
+
+| Question | Answer |
+|----------|--------|
+| At 6b, what's the exact vPC failure reason? | `Configuration consistency status: failed`, reason **"Secondary IP address does not match"** — the two leaves don't yet share the VTEP secondary IP. |
+| Is the bond/LACP broken when 6b fails? | No — the bond can be fully up (both slaves up, same Aggregator ID) and LACP healthy. The vPC member stays **down purely on the consistency failure**. |
+| What single line fixes it in 6c? | `ip address 10.0.1.100/32 secondary` on each leaf's loopback1 — the *same* secondary IP on both. |
+| What does the NVE flip to after 6c? | **VPC-VIP-Only** mode — source-interface shows `primary: 10.0.1.21, secondary: 10.0.1.100`, and the pair advertises as one VTEP. |
+| Member-port reason says "vpc peerlink is down" but Po100 is up — what's happening? | Misleading wording: the **consistency failure** is holding the member down, not the peer-link. Trust the `show vpc` consistency line, not the port reason. |
+
+### Lab gotchas
+
+| Question | Answer |
+|----------|--------|
+| Host-bond paste fails with `syntax error near unexpected token ')'` — why? | A `#` comment containing `)` inside the `sh -c '...'` string. Strip comments before pasting. |
+| Member port stuck in `Internal-Fail errDisable` — cause and fix? | Caused by repeated link thrashing (re-running a failing paste). `shut`/`no shut` often won't clear it on N9000v; the reliable fix is `reset.sh` + clean re-chain. |
+| 6b shows consistency **success** when the doc says it should fail — why? | Config pollution — 6c likely bled in from an earlier run. Reset and re-chain cleanly. |
+| After a fresh chain, cross-tenant ping to host2 fails — first thing to check? | host2's IP. `switch.sh` doesn't re-run host setup; host2's Tenant-B address from Session 5a must be re-applied after a clean chain. |
+
+---
+
 ## What you should be able to explain after Session 6
 
 1. What problem does vPC solve and what's the alternative?
@@ -404,10 +482,73 @@ Real things we learned while building this session:
 
 ---
 
+## Lab hygiene — how to not waste an hour (learned the hard way)
+
+This session is the most thrash-prone in the curriculum, because the
+host-bond setup involves repeated link down/up and a multi-line paste.
+Three failure modes and how to avoid them:
+
+1. **Paste the host-bond block exactly once, with comments stripped.**
+   A `#` comment containing a `)` breaks the `sh -c '...'` string
+   (`syntax error near unexpected token ')'`). Worse, when a paste
+   errors partway, the instinct is to re-run it — and repeated
+   down/up/enslave cycles can drive the leaf's member port into
+   **`Internal-Fail errDisable`**. Once a port is err-disabled, a plain
+   `shutdown` / `no shutdown` often does **not** clear it on N9000v
+   (you'll see "5 interface resets" and it bounces straight back to
+   errDisable). Fix the command first, then run the clean block once.
+
+2. **Partial config pushes pollute the lab and fake a "pass."** If 6c
+   config ever bleeds into a 6b-state lab (e.g. from an earlier run that
+   reached 6c), `show vpc` will show consistency **success** at 6b —
+   hiding the very failure 6b is meant to teach. If 6b shows success
+   when the doc says it should fail, suspect pollution, not a working
+   lab.
+
+3. **When in doubt, reset and re-chain — don't debug a dirty lab.** A
+   polluted or err-disabled lab costs more time to untangle than a clean
+   rebuild. The reliable recovery:
+   ```bash
+   ./scripts/reset.sh 01-underlay
+   # wait for all n9kv (healthy), then re-chain cleanly to where you were:
+   for s in 01-underlay 02-overlay 03-l2vni 04-anycast-gw \
+            05a-tenant-b 05b-route-leak 06a-vpc-base 06b-vpc-host-bond; do
+     ./scripts/switch.sh "$s"
+   done
+   ```
+   On a clean chain, 6b shows the real failure — `Configuration
+   inconsistency reason: Secondary IP address does not match` — and 6c
+   resolves it to `success` with the member port coming up.
+
+> **Host state carried from earlier sessions:** the `switch.sh` chain
+> pushes *device* config but does **not** re-run host setup. host2 was
+> moved to Tenant-B (`10.200.10.10`) back in **Session 5a** and *stays
+> there* through 6a/6b/6c — the vPC sessions only reconfigure **host1's**
+> bond. If you re-chain from scratch and skip 5a's host setup, host2 has
+> no IP, and cross-tenant tests (host1 → `10.200.10.10`) will fail for a
+> reason that has nothing to do with vPC. Re-apply host2's Session 5a
+> setup after a fresh chain.
+
+---
+
 ## Next
 
-Session 7: refactor the underlay from OSPF to eBGP. Pure config
-change, no topology change. The current OSPF underlay works fine
-for our scale but eBGP is what real hyperscalers use because it
-scales better. We'll switch to eBGP without losing vPC or VXLAN
-functionality.
+You've built dual-homed host attachment the production way: vPC with a
+shared anycast VTEP, so a host can bond to two leaves and the fabric
+sees one logical VTEP.
+
+**To advance (Model A — no redeploy):**
+
+```bash
+./scripts/switch.sh 07-ebgp-underlay
+```
+
+Session 7 refactors the underlay from **OSPF to eBGP** — pure config
+change, no topology change. The OSPF underlay works fine at our scale,
+but eBGP is what hyperscalers use because it scales better (no
+area-wide LSA flooding). We switch without losing vPC or VXLAN.
+
+> **Expect a brief reachability blip** during the swap: the push removes
+> OSPF and the single-AS iBGP, then builds per-device-ASN eBGP. For
+> ~30–60s the underlay is mid-transition — don't debug inside that
+> window; wait for eBGP to converge, then verify.
