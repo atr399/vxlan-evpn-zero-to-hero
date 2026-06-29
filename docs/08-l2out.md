@@ -31,8 +31,9 @@ than layering on the running lab. See
 ```bash
 cd ~/vxlan-evpn-zero-to-hero
 
-# 1. Tear down the running lab (frees RAM, avoids node-name clashes)
-containerlab destroy -t labs/01-underlay/topology.clab.yml --cleanup
+# 1. Tear down whatever is running (frees RAM, avoids node-name clashes).
+#    Point destroy at the topology that is CURRENTLY deployed:
+containerlab destroy -t labs/<current-session>/topology.clab.yml --cleanup
 
 # 2. Deploy this session's self-contained topology (~15 min)
 ./scripts/deploy.sh 08-l2out
@@ -40,9 +41,17 @@ containerlab destroy -t labs/01-underlay/topology.clab.yml --cleanup
 # 3. Wait for all n9kv (healthy), then push configs
 watch -n 10 'docker ps --format "{{.Names}}\t{{.Status}}" | grep clab-vxlan'
 ./scripts/switch.sh 08-l2out
-# switch.sh prints the external-bridge + host3 setup commands. Run them,
-# then the three L2Out test pings it lists.
+
+# 4. Configure the hosts + external switch — see "Host and external
+#    setup" below. NOTE the two gotchas there: host1 needs an LACP BOND
+#    (it inherits the vPC from Session 6), and the external bridge must
+#    use a VLAN sub-interface (Alpine has no `bridge` command).
 ```
+
+> **Fresh deploy = all hosts blank.** Model B destroys everything, so
+> host1, host2, and host3 all come up with no IPs. You configure all of
+> them in this session (see below) — nothing carries over from a
+> previous session's host setup.
 
 ## Topology (this session)
 
@@ -217,6 +226,104 @@ a policy decision based on trust level of the external network.
 
 ---
 
+## Host and external setup
+
+Three things to configure: the **external switch** bridge, **host3**, and
+**host1**. Two of them have a gotcha that will silently break the
+session if you miss it — both verified the hard way on a real run.
+
+### The external switch — use a VLAN sub-interface, NOT `bridge`
+
+Alpine **does not ship the `bridge` command**, so the vlan-filtering
+approach (`bridge vlan add ...`) fails with `sh: bridge: not found` and
+nothing forwards. Use a VLAN sub-interface bridged to the host port
+instead — same result, no `bridge` command needed:
+
+```bash
+docker exec clab-vxlan-evpn-external sh -c '
+ip link set br0 down 2>/dev/null
+ip link delete br0 2>/dev/null
+ip link delete eth1.50 2>/dev/null
+ip link add link eth1 name eth1.50 type vlan id 50
+ip link add br0 type bridge
+ip link set eth1.50 master br0
+ip link set eth2 master br0
+ip link set eth1 up
+ip link set eth1.50 up
+ip link set eth2 up
+ip link set br0 up
+'
+# verify both members present:
+docker exec clab-vxlan-evpn-external ls /sys/class/net/br0/brif/
+# want: eth1.50  eth2
+```
+
+`eth1.50` carries the 802.1Q VLAN-50 tag toward leaf1; `eth2` is the
+untagged port to host3; br0 bridges them.
+
+### host3 — plain access host in VLAN 50
+
+```bash
+docker exec clab-vxlan-evpn-host3 sh -c '
+ip addr flush dev eth1
+ip addr add 10.100.50.10/24 dev eth1
+ip link set eth1 up
+ip route replace default via 10.100.50.1
+'
+```
+
+### host1 — MUST be an LACP bond (inherits the vPC from Session 6) ⭐
+
+This is the trap. The Session 8 topology carries the vPC wiring from
+Session 6, so leaf1's host1 port is a **vPC member**
+(`channel-group 10 mode active`). If you give host1 a plain IP on eth1,
+the leaf port stays `suspended (no LACP PDUs)` and **host1 can't reach
+anything — not even its own gateway**. host1 must form the LACP bond:
+
+```bash
+docker exec clab-vxlan-evpn-host1 sh -c '
+ip link set bond0 down 2>/dev/null
+ip link delete bond0 2>/dev/null
+ip link add bond0 type bond
+echo 802.3ad > /sys/class/net/bond0/bonding/mode
+echo fast > /sys/class/net/bond0/bonding/lacp_rate
+echo 100 > /sys/class/net/bond0/bonding/miimon
+ip link set eth1 down
+ip link set eth2 down
+ip addr flush dev eth1
+ip addr flush dev eth2
+ip link set eth1 master bond0
+ip link set eth2 master bond0
+ip link set eth1 up
+ip link set eth2 up
+ip link set bond0 up
+ip addr add 10.100.10.10/24 dev bond0
+ip route replace default via 10.100.10.1
+'
+# wait ~30s for LACP, then host1 should reach its gateway:
+docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.10.1   # TTL 255
+```
+
+### host2 — Tenant-B (for the cross-tenant test)
+
+```bash
+docker exec clab-vxlan-evpn-host2 sh -c '
+ip addr flush dev eth1
+ip addr add 10.200.10.10/24 dev eth1
+ip link set eth1 up
+ip route replace default via 10.200.10.1
+'
+```
+
+> **Why host1 is bonded but host2/host3 are plain:** host1 was the
+> dual-homed vPC host from Session 6, and the vPC wiring persists in
+> every Model B topology from Session 8 onward. host2 and host3 are
+> single-attached, so they take a plain IP. **This same host1-bond
+> requirement applies to Sessions 9, 10, and 11** — anywhere host1
+> appears on the vPC pair, it needs the bond, not a plain IP.
+
+---
+
 ## Key tests after deployment
 
 ### Test 1: VLAN/VNI operational
@@ -244,7 +351,8 @@ docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.50.10
 ```
 
 host1 (fabric-attached, VLAN 10) → host3 (external, VLAN 50) via
-inter-VLAN routing in Tenant-A.
+inter-VLAN routing in Tenant-A. **Observed: TTL 63, 0% loss.** (host1
+must be bonded first — see Host setup above.)
 
 ### Test 4: Cross-tenant via leak + cross-VLAN to external
 
@@ -255,7 +363,8 @@ docker exec clab-vxlan-evpn-host2 ping -c 3 10.100.50.10
 host2 (Tenant-B) → host3 (Tenant-A, external) — exercises the route
 leak from Session 5b combined with the new L2Out path. Traffic
 travels VXLAN-encap'd from leaf2 to leaf1, decap'd, forwarded
-out Eth1/6 to external, then to host3.
+out Eth1/6 to external, then to host3. **Observed: TTL 63, 0% loss** —
+the curriculum's showpiece (route-leak + anycast + L2Out in one ping).
 
 ---
 
@@ -279,6 +388,22 @@ attached and external-attached (e.g., vMotion across racks), EVPN
 generates MAC mobility events. The receiving leaf re-advertises
 the MAC with an incremented mobility sequence number. The fabric
 converges automatically.
+
+---
+
+## Quick review (flashcards)
+
+Cover the right column.
+
+| Question | Answer |
+|----------|--------|
+| What is L2Out? | Extending a fabric VLAN out to a **non-EVPN** switch via a regular 802.1Q trunk at the fabric edge. The external switch speaks plain Ethernet; the leaf does VXLAN encap/decap transparently. |
+| How does the fabric learn an external host's MAC? | Standard L2 learning on the trunk port, then the leaf **re-advertises it as a Type-2 EVPN route** — so remote leaves reach it like any fabric host. |
+| Single vs dual-attached L2Out? | Single = one trunk to one leaf (SPOF). Dual = external dual-homed to both leaves via vPC (production-grade). |
+| Why must host1 be an LACP bond in this session? | The Session 8 topology inherits the **vPC wiring from Session 6**; leaf1's host1 port is `channel-group 10 mode active`. A plain IP leaves the port `suspended (no LACP PDUs)` and host1 is unreachable. |
+| Why does the external bridge use a VLAN sub-interface, not `bridge`? | Alpine has no `bridge` command — vlan-filtering fails with `bridge: not found`. A VLAN sub-interface (`eth1.50`) bridged to the host port achieves the same 802.1Q boundary. |
+| External→gateway ping shows TTL 255 — why? | host3 is one **L2 hop** from its anycast gateway through the external bridge — bridged, not routed, so TTL is undecremented. |
+| Fabric→external and cross-tenant→external both show TTL 63 — why? | Routed paths: anycast gateway + (for host2) the Session 5b route-leak. One/two L3 decrements from 64. |
 
 ---
 
