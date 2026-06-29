@@ -279,26 +279,58 @@ BONDSETUP
     echo "Setup for 8 — external switch (Linux bridge) + host3:"
     cat << 'L2OUT'
 
-  # Configure external as VLAN-aware Linux bridge
+  # external switch: VLAN sub-interface bridged to host port.
+  # (Alpine has NO 'bridge' command, so vlan-filtering does not work.)
   docker exec clab-vxlan-evpn-external sh -c '
-    ip link add br0 type bridge vlan_filtering 1 2>/dev/null || true
-    ip link set eth1 master br0
+    ip link set br0 down 2>/dev/null
+    ip link delete br0 2>/dev/null
+    ip link delete eth1.50 2>/dev/null
+    ip link add link eth1 name eth1.50 type vlan id 50
+    ip link add br0 type bridge
+    ip link set eth1.50 master br0
     ip link set eth2 master br0
-    bridge vlan add vid 50 dev eth1 tagged
-    bridge vlan add vid 50 dev br0 self tagged
-    bridge vlan add vid 50 dev eth2 pvid untagged
-    bridge vlan del vid 1 dev eth2 2>/dev/null
     ip link set eth1 up
+    ip link set eth1.50 up
     ip link set eth2 up
     ip link set br0 up
   '
 
-  # Configure host3 with VLAN 50 subnet IP
+  # host3: plain access host in VLAN 50
   docker exec clab-vxlan-evpn-host3 sh -c '
     ip addr flush dev eth1
     ip addr add 10.100.50.10/24 dev eth1
     ip link set eth1 up
     ip route replace default via 10.100.50.1
+  '
+
+  # host1: MUST be an LACP bond - it inherits the vPC from Session 6.
+  # A plain IP leaves leaf1 Eth1/3 suspended(no LACP PDUs) and host1 unreachable.
+  docker exec clab-vxlan-evpn-host1 sh -c '
+    ip link set bond0 down 2>/dev/null
+    ip link delete bond0 2>/dev/null
+    ip link add bond0 type bond
+    echo 802.3ad > /sys/class/net/bond0/bonding/mode
+    echo fast > /sys/class/net/bond0/bonding/lacp_rate
+    echo 100 > /sys/class/net/bond0/bonding/miimon
+    ip link set eth1 down
+    ip link set eth2 down
+    ip addr flush dev eth1
+    ip addr flush dev eth2
+    ip link set eth1 master bond0
+    ip link set eth2 master bond0
+    ip link set eth1 up
+    ip link set eth2 up
+    ip link set bond0 up
+    ip addr add 10.100.10.10/24 dev bond0
+    ip route replace default via 10.100.10.1
+  '
+
+  # host2: Tenant-B (for the cross-tenant test)
+  docker exec clab-vxlan-evpn-host2 sh -c '
+    ip addr flush dev eth1
+    ip addr add 10.200.10.10/24 dev eth1
+    ip link set eth1 up
+    ip route replace default via 10.200.10.1
   '
 
 L2OUT
@@ -312,6 +344,35 @@ L2OUT
     echo ""
     echo "Setup for 9 - configure host_internet:"
     cat << 'L3OUT'
+
+  # host1: LACP bond (inherits vPC from Session 6 - required or unreachable)
+  docker exec clab-vxlan-evpn-host1 sh -c '
+    ip link set bond0 down 2>/dev/null
+    ip link delete bond0 2>/dev/null
+    ip link add bond0 type bond
+    echo 802.3ad > /sys/class/net/bond0/bonding/mode
+    echo fast > /sys/class/net/bond0/bonding/lacp_rate
+    echo 100 > /sys/class/net/bond0/bonding/miimon
+    ip link set eth1 down
+    ip link set eth2 down
+    ip addr flush dev eth1
+    ip addr flush dev eth2
+    ip link set eth1 master bond0
+    ip link set eth2 master bond0
+    ip link set eth1 up
+    ip link set eth2 up
+    ip link set bond0 up
+    ip addr add 10.100.10.10/24 dev bond0
+    ip route replace default via 10.100.10.1
+  '
+
+  # host2: Tenant-B
+  docker exec clab-vxlan-evpn-host2 sh -c '
+    ip addr flush dev eth1
+    ip addr add 10.200.10.10/24 dev eth1
+    ip link set eth1 up
+    ip route replace default via 10.200.10.1
+  '
 
   # extrouter (cEOS) loaded its startup-config at deploy time. No setup needed.
   # Just configure host_internet IP and default route.
@@ -339,6 +400,35 @@ L3OUT
     echo ""
     echo "Setup for 11 - Site2 host (host5 in Tenant-A VLAN 60, subnet 10.100.30.0/24):"
     cat << 'SITE2'
+
+  # host1: LACP bond (inherits vPC from Session 6 - required or unreachable)
+  docker exec clab-vxlan-evpn-host1 sh -c '
+    ip link set bond0 down 2>/dev/null
+    ip link delete bond0 2>/dev/null
+    ip link add bond0 type bond
+    echo 802.3ad > /sys/class/net/bond0/bonding/mode
+    echo fast > /sys/class/net/bond0/bonding/lacp_rate
+    echo 100 > /sys/class/net/bond0/bonding/miimon
+    ip link set eth1 down
+    ip link set eth2 down
+    ip addr flush dev eth1
+    ip addr flush dev eth2
+    ip link set eth1 master bond0
+    ip link set eth2 master bond0
+    ip link set eth1 up
+    ip link set eth2 up
+    ip link set bond0 up
+    ip addr add 10.100.10.10/24 dev bond0
+    ip route replace default via 10.100.10.1
+  '
+
+  # host2: Tenant-B
+  docker exec clab-vxlan-evpn-host2 sh -c '
+    ip addr flush dev eth1
+    ip addr add 10.200.10.10/24 dev eth1
+    ip link set eth1 up
+    ip route replace default via 10.200.10.1
+  '
 
   # host5 is in Site2 (separate AS 65001), attached to leaf4 in VLAN 60 / 10.100.30.0/24
   # NOTE: L3-only stretching - VLAN 60 only exists in Site2, NOT in Site1
