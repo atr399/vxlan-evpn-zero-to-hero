@@ -182,31 +182,130 @@ Self-contained (Model B). One deploy brings up both pods + the IPN.
 ```bash
 cd ~/vxlan-evpn-zero-to-hero
 
-# 1. Tear down any running lab.
-containerlab destroy -t labs/01-underlay/topology.clab.yml --cleanup
+# 1. Tear down any running lab (point at the CURRENT topology).
+containerlab destroy -t labs/<current-session>/topology.clab.yml --cleanup
 docker ps -a | grep clab-vxlan          # expect empty
+free -h                                  # 7 N9000v need ~55 GB
 
 # 2. Deploy this session's self-contained topology.
 #    7 N9000v (spine1-4, leaf1-3) + IPN (cEOS) + hosts. ~15-20 min to boot.
 ./scripts/deploy.sh 10-multipod
 
-# 3. Wait for all Nexus nodes healthy.
+# 3. Wait for the Nexus nodes. NOTE: with 7 N9000v booting at once, one
+#    may stay (unhealthy) for a while — or get stuck unhealthy entirely
+#    even though it works. Trust SSH over the healthcheck flag:
 watch -n 10 'docker ps --format "{{.Names}}\t{{.Status}}" | grep clab-vxlan'
+#    If a node is unhealthy past ~15 min, check it directly:
+#      ssh admin@clab-vxlan-evpn-leaf3 'show version | include uptime'
+#    If SSH answers, the node is usable (see "unhealthy but working" below).
 
 # 4. Push configs.
 ./scripts/switch.sh 10-multipod
 
-# 5. Configure host4 + run cross-pod tests (see verify.md).
-docker exec clab-vxlan-evpn-host4 sh -c '
-  ip addr flush dev eth1
-  ip addr add 10.100.20.20/24 dev eth1
-  ip link set eth1 up
-  ip route replace default via 10.100.20.1
+# 5. Fix the IPN MTU (REQUIRED on fresh deploy — see below) and confirm
+#    OSPF goes FULL before any cross-pod test:
+for s in spine1 spine2 spine3 spine4; do
+  ssh admin@clab-vxlan-evpn-$s 'configure terminal ; interface Ethernet1/3 ; mtu 9214 ; end'
+done
+sleep 30
+docker exec clab-vxlan-evpn-ipn Cli -p15 -c 'show ip ospf neighbor'   # want 4 FULL
+
+# 6. Configure hosts (see "Host setup" below — host1 needs the LACP bond).
+```
+
+> **⚠️ The IPN MTU must be re-applied on fresh deploy.** The spine
+> configs *contain* `mtu 9214` on the IPN interface (Ethernet1/3), but on
+> N9000v the MTU often **doesn't take effect on the data plane until the
+> interface bounces** — so a fresh deploy comes up with OSPF stuck in
+> `EXCH START` (DBD exchange fails on the 9214-vs-9216 mismatch with
+> cEOS). Re-applying `mtu 9214` (step 5) bounces it into effect and OSPF
+> goes FULL. **No cross-pod traffic works until all 4 IPN neighbors are
+> FULL.**
+>
+> **Toward a permanent fix (untested options):** to avoid the manual
+> re-apply every deploy, you could (a) add an explicit `shutdown` /
+> `no shutdown` on Ethernet1/3 at the end of each spine config so the
+> MTU bounces during the push, or (b) investigate whether a fresh push
+> ordering applies the MTU before `no shutdown`. Neither is verified yet
+> — for now the reliable, known-good path is the manual re-apply in
+> step 5.
+
+> **"Unhealthy but working" (vrnetlab quirk).** On a heavy 7-node boot, a
+> node (often the slowest leaf) can stay `(unhealthy)` forever because
+> the vrnetlab launcher's status flag never flips from "starting" — even
+> though NX-OS booted fine, answers SSH, and accepts config. The
+> healthcheck (`uv run /healthcheck.py`) just keeps reporting "starting".
+> `switch.sh` checks SSH (not the healthcheck), so it pushes fine. Trust
+> SSH: if `ssh admin@clab-vxlan-evpn-<node> 'show version'` works, the
+> node is usable regardless of the flag.
+
+## Host setup
+
+### host1 — LACP bond (Pod 1 vPC), Tenant-A
+
+host1 is dual-homed to leaf1+leaf2 (the Pod 1 vPC pair, inherited from
+Session 6), so it **must** be an LACP bond — a plain IP leaves the leaf
+port `suspended (no LACP PDUs)` and host1 unreachable.
+
+```bash
+docker exec clab-vxlan-evpn-host1 sh -c '
+ip link set bond0 down 2>/dev/null
+ip link delete bond0 2>/dev/null
+ip link add bond0 type bond
+echo 802.3ad > /sys/class/net/bond0/bonding/mode
+echo fast > /sys/class/net/bond0/bonding/lacp_rate
+echo 100 > /sys/class/net/bond0/bonding/miimon
+ip link set eth1 down
+ip link set eth2 down
+ip addr flush dev eth1
+ip addr flush dev eth2
+ip link set eth1 master bond0
+ip link set eth2 master bond0
+ip link set eth1 up
+ip link set eth2 up
+ip link set bond0 up
+ip addr add 10.100.10.10/24 dev bond0
+ip route replace default via 10.100.10.1
 '
 ```
 
-> RAM note: 7 N9000v + cEOS is the heaviest session except none —
-> budget ~55 GB. Confirm with `free -h` before deploying.
+### host4 — Pod 2, single-homed to leaf3, plain IP
+
+```bash
+docker exec clab-vxlan-evpn-host4 sh -c '
+ip addr flush dev eth1
+ip addr add 10.100.20.20/24 dev eth1
+ip link set eth1 up
+ip route replace default via 10.100.20.1
+'
+```
+
+### host2 — Tenant-B (for the cross-pod + cross-tenant test)
+
+```bash
+docker exec clab-vxlan-evpn-host2 sh -c '
+ip addr flush dev eth1
+ip addr add 10.200.10.10/24 dev eth1
+ip link set eth1 up
+ip route replace default via 10.200.10.1
+'
+```
+
+### host_internet — external (for the L3Out-from-Pod2 test)
+
+```bash
+docker exec clab-vxlan-evpn-host_internet sh -c '
+ip addr flush dev eth1
+ip addr add 203.0.113.10/24 dev eth1
+ip link set eth1 up
+ip route replace default via 203.0.113.1
+'
+```
+
+> **Wait ~30s after the host1 bond setup before testing** — LACP needs to
+> converge or host1 tests show a false 100% loss (the `seq 0` drop).
+> Confirm with `docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.10.1`
+> (want TTL 255).
 
 ---
 
@@ -244,7 +343,7 @@ spine3, spine4 (Pod 2 spines).
 docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.20.20
 ```
 
-Expected: succeeds, **TTL 62**. host1 (Pod 1) → host4 (Pod 2), same
+Expected/observed: **TTL 62, 0% loss** (after first-packet ARP). host1 (Pod 1) → host4 (Pod 2), same
 Tenant-A, via cross-pod VXLAN over the IPN. The packet goes leaf1 →
 spine1 → IPN → spine3 → leaf3 → host4; the two TTL decrements are the
 two leaf SVIs.
@@ -255,7 +354,7 @@ two leaf SVIs.
 docker exec clab-vxlan-evpn-host4 ping -c 3 10.200.10.10
 ```
 
-Expected: succeeds, TTL 62. host4 (Pod 2, Tenant-A) → host2 (Pod 1,
+Expected/observed: **TTL 62**. host4 (Pod 2, Tenant-A) → host2 (Pod 1,
 Tenant-B). Exercises the Session 5b route leak across pods — with **zero**
 cross-pod-specific config, because RT semantics are fabric-global.
 
@@ -265,7 +364,7 @@ cross-pod-specific config, because RT semantics are fabric-global.
 docker exec clab-vxlan-evpn-host4 ping -c 3 203.0.113.10
 ```
 
-Expected: succeeds, TTL 61. host4 reaches "the internet" through Pod 1's
+Expected/observed: **TTL 61** (one extra hop vs intra-pod). host4 reaches "the internet" through Pod 1's
 L3Out — leaf3 learned `203.0.113.0/24` via EVPN Type-5 from leaf1, tunnels
 to leaf1, which hands off to extrouter.
 
@@ -283,13 +382,19 @@ cross-pod to leaf3. extrouter has no idea VXLAN or multi-pod exist.
 
 ## Lessons from the build
 
-**1. MTU mismatch is the #1 Multi-Pod gotcha.** On first deploy, OSPF on
-the IPN stuck in `EXCH START` — the state where OSPF tries to exchange
+**1. MTU mismatch is the #1 Multi-Pod gotcha — AND it needs a bounce.**
+On fresh deploy, OSPF on the IPN sticks in `EXCH START` — the state where OSPF tries to exchange
 its database and fails. The cause: the spines' IPN-facing interfaces were
 at MTU **9216** (NX-OS jumbo default), but **cEOS caps at 9214**. Two
 bytes, and OSPF refused to form the adjacency (OSPF requires identical
 MTU on a point-to-point link). Fix: drop the spine IPN interfaces to
-**9214** to match cEOS.
+**9214** to match cEOS. **Subtle part:** the spine configs already
+*contain* `mtu 9214` on Ethernet1/3, but on N9000v the MTU often doesn't
+take effect on the data plane until the interface **bounces** — so even
+with the right config, a fresh deploy comes up broken until you re-apply
+the MTU (which bounces it). Always re-apply `mtu 9214` and confirm 4 FULL
+before testing. This is verified, not theoretical — it happened on every
+clean deploy.
 
 > Production lesson: when you connect a Cisco fabric to any non-Cisco
 > device, **check MTU first**. The whole path is limited by the smallest
@@ -341,6 +446,22 @@ genuinely separate ASNs.
 In reality pods are often different ages, NX-OS versions, and hardware —
 Multi-Pod is a migration pattern as much as a scale pattern. You can
 stand up a new pod with a newer design while old pods keep running.
+
+---
+
+## Quick review (flashcards)
+
+Cover the right column.
+
+| Question | Answer |
+|----------|--------|
+| What is the IPN and why does Multi-Pod need it? | The **Inter-Pod Network** — an underlay router (here cEOS) joining the two pods' spines via OSPF. It carries VTEP-to-VTEP reachability *between* pods so VXLAN tunnels can span them. |
+| Why does OSPF stick in `EXCH START` on fresh deploy? | **MTU mismatch** on the IPN link — spines default 9216, cEOS caps at 9214. The DBD exchange fails. Fix: `mtu 9214` on the spine IPN interfaces (and bounce). |
+| The config already has `mtu 9214` — why still broken? | On N9000v the MTU may not hit the data plane until the interface **bounces**. Re-applying the command bounces it into effect. |
+| Why is cross-pod latency ~10-18ms vs ~3ms intra-pod? | Cross-pod traffic traverses the **IPN** (leaf→spine→IPN→spine→leaf), several more hops than staying inside one pod. The RTT jump is the visible proof the pods are separate. |
+| Cross-pod ping shows TTL 62, but host4→external shows TTL 61 — why? | TTL = number of routed hops. Same-tenant cross-pod = 2 leaf routings (62). Pod2→external adds the L3Out hop in Pod1 (61). |
+| Why must host1 be an LACP bond here? | Pod 1 inherits the Session 6 vPC; host1 is dual-homed to leaf1+leaf2. Plain IP → port suspended → unreachable. |
+| A node shows `(unhealthy)` but answers SSH — usable? | Yes. The vrnetlab launcher status flag is stuck at "starting"; NX-OS is fine. `switch.sh` uses SSH, not the flag. Trust SSH. |
 
 ---
 
