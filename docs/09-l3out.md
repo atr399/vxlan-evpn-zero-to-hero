@@ -29,20 +29,89 @@ than layering on the running lab. See
 ```bash
 cd ~/vxlan-evpn-zero-to-hero
 
-# 1. Tear down the running lab
-containerlab destroy -t labs/01-underlay/topology.clab.yml --cleanup
+# 1. Tear down whatever is running (point at the CURRENT topology):
+containerlab destroy -t labs/<current-session>/topology.clab.yml --cleanup
 
 # 2. Deploy this session's self-contained topology (~15 min).
-#    extrouter loads its startup config at boot - no separate push needed
-#    for it.
+#    extrouter (cEOS) loads its startup config at boot - no separate push
+#    needed for it.
 ./scripts/deploy.sh 09-l3out
 
 # 3. Wait for healthy, then push the NX-OS configs
 watch -n 10 'docker ps --format "{{.Names}}\t{{.Status}}" | grep clab-vxlan'
 ./scripts/switch.sh 09-l3out
-# switch.sh prints the host_internet setup command. Run it, wait ~30 s
-# for both eBGP sessions, then the end-to-end tests it lists.
+
+# 4. Configure hosts — see "Host setup" below. THREE hosts to set up:
+#    host1 (LACP bond — inherits the vPC from Session 6), host2 (Tenant-B),
+#    and host_internet (external). Then WAIT ~30s for LACP + eBGP before
+#    testing, or host1 tests show false 100% loss.
 ```
+
+> **Fresh deploy = all hosts blank** (Model B). host1, host2, and
+> host_internet all come up with no IPs.
+
+## Host setup
+
+### host1 — MUST be an LACP bond (inherits vPC from Session 6) ⭐
+
+Same trap as Session 8: leaf1's host1 port is a vPC member
+(`channel-group 10 mode active`). A plain IP leaves it
+`suspended (no LACP PDUs)` and host1 is unreachable — every test
+involving host1 fails while host2/host_internet work, which is the
+tell-tale signature.
+
+```bash
+docker exec clab-vxlan-evpn-host1 sh -c '
+ip link set bond0 down 2>/dev/null
+ip link delete bond0 2>/dev/null
+ip link add bond0 type bond
+echo 802.3ad > /sys/class/net/bond0/bonding/mode
+echo fast > /sys/class/net/bond0/bonding/lacp_rate
+echo 100 > /sys/class/net/bond0/bonding/miimon
+ip link set eth1 down
+ip link set eth2 down
+ip addr flush dev eth1
+ip addr flush dev eth2
+ip link set eth1 master bond0
+ip link set eth2 master bond0
+ip link set eth1 up
+ip link set eth2 up
+ip link set bond0 up
+ip addr add 10.100.10.10/24 dev bond0
+ip route replace default via 10.100.10.1
+'
+```
+
+### host2 — Tenant-B
+
+```bash
+docker exec clab-vxlan-evpn-host2 sh -c '
+ip addr flush dev eth1
+ip addr add 10.200.10.10/24 dev eth1
+ip link set eth1 up
+ip route replace default via 10.200.10.1
+'
+```
+
+### host_internet — external host behind the L3Out router
+
+```bash
+docker exec clab-vxlan-evpn-host_internet sh -c '
+ip addr flush dev eth1
+ip addr add 203.0.113.10/24 dev eth1
+ip link set eth1 up
+ip route replace default via 203.0.113.1
+'
+```
+
+> **⏳ Wait ~30 seconds after the host1 bond setup before testing.** LACP
+> needs to converge *and* the eBGP sessions need to come up. Tests fired
+> immediately show a false 100% loss on host1 specifically (you'll see
+> `seq 0` dropped even on the gateway ping). Confirm readiness with:
+> ```bash
+> docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.10.1   # want TTL 255, 0% loss
+> ```
+> If that's clean, host1's bond is up and you can run the L3Out tests.
 
 ## Topology (this session)
 
@@ -238,8 +307,10 @@ handles the inter-leaf transport.
 show bgp vrf Tenant-A ipv4 unicast summary
 ```
 
-Expected: neighbor 192.0.2.1 (AS 65100) in Established state, with
-1+ prefix received.
+Expected: the extrouter neighbor (AS 65100) in Established state with
+1+ prefix received. (The neighbor IP is one end of the P2P /31 — it may
+show as `192.0.2.0` or `192.0.2.1` depending on which side; both are
+valid.) **Observed: Established, 1 prefix.**
 
 ### Test 2: External route in Tenant-A RIB on leaf1
 
@@ -274,8 +345,10 @@ docker exec clab-vxlan-evpn-host1 ping -c 3 203.0.113.10
 docker exec clab-vxlan-evpn-host2 ping -c 3 203.0.113.10
 ```
 
-Both should succeed. host2's path goes through the Session 5b
-route leak (Tenant-B → Tenant-A → external).
+Both should succeed — **observed TTL 62, 0% loss** once converged.
+host2's path goes through the Session 5b route leak (Tenant-B → Tenant-A
+→ external). If host1 shows 100% loss but host2 works, host1's bond
+isn't up — re-run the bond setup and wait 30s (see Host setup).
 
 ### Test 6: External can reach fabric
 
@@ -283,8 +356,10 @@ route leak (Tenant-B → Tenant-A → external).
 docker exec clab-vxlan-evpn-host_internet ping -c 3 10.100.10.10
 ```
 
-Expected: succeeds. extrouter learned fabric subnets via eBGP from
-leaf1.
+Expected: succeeds — **observed TTL 62, 0% loss**. extrouter learned
+fabric subnets via eBGP from leaf1. Also test the return to host2:
+`docker exec clab-vxlan-evpn-host_internet ping -c 3 10.200.10.10`
+(reaches Tenant-B via the route leak).
 
 ---
 
@@ -321,6 +396,22 @@ to avoid loops.
 this session: Tenant-B hosts can reach external networks via
 Tenant-A's L3Out, even though Tenant-B has no L3Out itself. Useful
 for shared services (DNS, NTP, etc. behind a single L3Out).
+
+---
+
+## Quick review (flashcards)
+
+Cover the right column.
+
+| Question | Answer |
+|----------|--------|
+| What is L3Out? | Routed (eBGP) peering between a tenant VRF and an **external router**, so the fabric exchanges IP prefixes with the outside world (WAN, internet, firewall). The L3 equivalent of Session 8's L2Out. |
+| How does an external subnet get into the fabric? | The border leaf learns it via **eBGP** from the external router, installs it in the tenant VRF, and re-originates it as an **EVPN Type-5** route so every leaf can reach it via the L3VNI. |
+| Type-5 vs Type-2 here? | Type-5 carries the external **prefix** (203.0.113.0/24); it's prefix-granular, unlike Type-2's host-granular MAC/IP. External routing hands off as standard IP subnets. |
+| Why does the remote leaf show the external route via the VTEP? | The border leaf re-originated the external prefix as Type-5 with itself (the shared VTEP 10.0.1.100) as next-hop; remote leaves reach it encapsulated in L3VNI 50001. |
+| How does host2 (Tenant-B) reach the external host? | Via the Session 5b **route leak** — Tenant-B imports Tenant-A's RT, so the external prefix leaks into Tenant-B, then out the L3Out. |
+| Why must host1 be an LACP bond? | It inherits the vPC from Session 6 (`channel-group 10 mode active`). Plain IP -> port `suspended (no LACP PDUs)` -> host1 unreachable. |
+| host1 tests fail but host2 works — diagnosis? | host1's bond isn't up/converged. Re-run the bond setup, wait ~30s for LACP, confirm `host1 ping 10.100.10.1` = TTL 255. |
 
 ---
 
