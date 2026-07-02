@@ -257,6 +257,15 @@ watch -n 10 'docker ps --format "{{.Names}}\t{{.Status}}" | grep clab-vxlan'
 ```
 
 > **Give it time.** After the config push, the DCI eBGP-EVPN session and
+> **Don't trust the first test run — verify convergence first.** On a
+> live retest, the smoke pings all failed 100% when run ~90 s after the
+> final push: spine1 showed leaf1/leaf2 **Idle** in `show bgp l2vpn evpn
+> summary` and the NVE showed `Fabric convergence time left: 24 seconds`.
+> Everything was correctly configured — BGP was simply still
+> re-establishing. Minutes later, all four tests passed unchanged. Before
+> declaring failure, confirm: (a) spine's leaf neighbors **Established**
+> with PfxRcd > 0, (b) `Fabric convergence time left: 0`, (c) then test.
+>
 > `delay-restore` need ~60 s. `deploy-final.sh` already sleeps 60 s before
 > testing. If cross-site tests fail on the very first run, wait another
 > minute and re-run just the pings before debugging.
@@ -320,6 +329,20 @@ difference between working and not (see Lessons).
 docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.30.10   # Site1 → Site2
 docker exec clab-vxlan-evpn-host5 ping -c 3 10.100.10.10   # Site2 → Site1
 docker exec clab-vxlan-evpn-host5 ping -c 3 203.0.113.10   # Site2 → L3Out (via Site1)
+```
+
+**Observed on the verified run:** Site1→Site2 and Site2→Site1 **TTL 61**;
+Site2→L3Out and external→Site2 **TTL 60** (the two longest paths in the
+curriculum). RTTs are noticeably higher than Multi-Pod (**~50–115 ms** vs
+10–18 ms cross-pod): every cross-site packet is decapsulated and
+re-encapsulated at *two* BGWs (tunnel stitching), and that shows up in
+latency. The leaf1 route check is the signature of Multi-Site working:
+
+```bash
+ssh admin@clab-vxlan-evpn-leaf1 'show ip route 10.100.30.0/24 vrf Tenant-A'
+# *via 10.0.2.100%default ... segid: 50001 encap: VXLAN
+#      ^^^^^^^^^^ Site2's BGW VIP — NOT the DCI address (192.168.100.1).
+# The BGW re-originated the route with itself as next-hop = tunnel stitching.
 docker exec clab-vxlan-evpn-host_internet ping -c 3 10.100.30.10  # external → Site2
 ```
 
@@ -425,6 +448,22 @@ deliberately, per-VNI, with storm control, never wholesale.
 handling across the DCI uses the BGW's multisite ingress-replication.
 Tuning this (and avoiding cross-site flooding) is a real operational
 concern at scale.
+
+---
+
+## Quick review (flashcards)
+
+Cover the right column.
+
+| Question | Answer |
+|----------|--------|
+| Multi-Pod vs Multi-Site in one line each? | Multi-Pod = **one fabric, one control plane** stretched over an IPN (one fault domain). Multi-Site = **independent fabrics** joined by Border Gateways over a DCI (fault isolation). |
+| What is tunnel stitching? | The leaf's VXLAN tunnel **terminates at its site's BGW**; the BGW starts a *new* tunnel across the DCI to the remote BGW. Two stitched tunnels, never one end-to-end. |
+| How do you prove stitching in the routing table? | The cross-site route's next-hop is the **remote BGW VIP** (10.0.2.100), not the DCI link address — the BGW re-originated it with itself as next-hop. |
+| Why is cross-site RTT much higher than cross-pod? | Two extra encap/decap operations (one per BGW) plus the DCI traversal — ~50–115 ms here vs 10–18 ms cross-pod. |
+| Smoke tests all fail right after deploy-final — first check? | Convergence, not config: spine `show bgp l2vpn evpn summary` (leaves must be Established, not Idle) and NVE `Fabric convergence time left: 0`. |
+| Site1 and Site2 have different ASNs — how do auto-RTs still match? | The BGW eBGP-EVPN peering rewrites them (`rewrite-evpn-rt-asn`), so Site2's ASN:VNI RTs are translated on the way in. |
+| Is VLAN 60 stretched to Site1? | No — Multi-Site here stretches **routing (Type-5/Type-2)**, not the L2 domain. host1 reaches host5 by routing through both BGWs. |
 
 ---
 
