@@ -277,6 +277,30 @@ Quick preview:
 - Change MTU on one side of a link, watch the neighbor relationship
   flap (subtle MTU mismatch bug — the classic real-world VXLAN failure).
 
+## Control-plane verification — underlay baseline
+
+```bash
+ssh admin@clab-vxlan-evpn-leaf1 'show ip ospf neighbors'          # 2x FULL (both spines)
+ssh admin@clab-vxlan-evpn-leaf1 'show ip route 10.0.1.22'          # 2 ECMP paths to leaf2's VTEP
+```
+Two equal-cost paths is the baseline fact the whole curriculum sits on —
+and the reason a single-uplink packet capture can be empty later
+(Session 4's ECMP gotcha): any given flow hashes to ONE of them.
+
+---
+
+## Day in the life of a packet — leaf1 pings leaf2's VTEP loopback
+
+`ping 10.0.1.22 source 10.0.1.21` from leaf1. No overlay exists yet — this is the bare road every later tunnel drives on.
+
+**Hop 1 — leaf1: route lookup.** WHAT: ICMP to 10.0.1.22; RIB has TWO equal-cost OSPF paths (via spine1 Eth1/1, via spine2 Eth1/2). WHY: full-mesh P2P links + same cost = ECMP. HOW the flow picks one: 5-tuple hash — the flow sticks to ONE uplink. VERIFY: `show ip route 10.0.1.22` (ubest 2/0), `show ip ospf neighbors` (2x FULL). WHEN it breaks: one uplink down → hash re-converges to the survivor, sub-second.
+
+**Hop 2 — spine (whichever won the hash): pure IP transit.** WHAT: routes on destination 10.0.1.22, decrements TTL, forwards to leaf2. WHY it's this simple: spines carry /31s + loopbacks only — no VLANs, no MACs, no state about hosts. VERIFY on spine1: `show ip route 10.0.1.22` (one hop away, intra-area).
+
+**Hop 3 — leaf2: local delivery.** WHAT: 10.0.1.22 is its own loopback1 → punt to CPU, reply. The reply independently hashes its own path — **return traffic may use the other spine.** WHY that matters later: captures must cover both uplinks (Session 4 gotcha).
+
+---
+
 ## What you should be able to explain after this session
 
 If you can answer these out loud, you've got it:

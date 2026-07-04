@@ -330,6 +330,33 @@ Highlights:
   through spine2 even though the direct path is gone (because BGP
   rides on the loopback, which is still reachable via spine2).
 
+## Control-plane verification — the spine's real role
+
+```bash
+ssh admin@clab-vxlan-evpn-spine1 'show bgp l2vpn evpn summary'   # leaves as RR clients
+ssh admin@clab-vxlan-evpn-spine1 'show nve peers'                # EMPTY - spines have no VTEP
+```
+The empty `show nve peers` **is the lesson**: the spine reflects every
+EVPN route (control plane) yet owns no tunnel (data plane) — it routes
+outer IP only. (Session 11's collapsed spine+BGW is the deliberate
+exception.)
+
+---
+
+## Day in the life of a packet — but the packet is a BGP UPDATE
+
+No host traffic exists yet; the interesting journey is a route's. Follow one future Type-2 from leaf1 to leaf2.
+
+**Hop 1 — leaf1: origination.** WHAT: leaf1 will place an EVPN NLRI into BGP with next-hop = its VTEP (10.0.1.21). WHY next-hop is lo1 not the update's source: receivers must learn *where to tunnel*, not where the TCP session came from. VERIFY (once VNIs exist): `show bgp l2vpn evpn neighbors 10.0.0.11 advertised-routes`.
+
+**Hop 2 — spine (RR): reflect, don't consume.** WHAT: spine runs best-path, reflects to other clients, adds Cluster-ID. WHY RR: without it, N leaves need N*(N-1)/2 iBGP sessions; with it, N sessions. WHY the spine doesn't install: no `nv overlay` VTEP — control without data. VERIFY: `show bgp l2vpn evpn summary` on spine (leaves as peers), `show nve peers` (empty).
+
+**Hop 3 — leaf2: import decision.** WHAT: leaf2 receives the reflected route, matches RTs, imports into matching L2VNI/VRF tables. WHY RT not RD decides: RD only de-duplicates; RT is the delivery address. VERIFY: `show bgp l2vpn evpn` (route present with Cluster-ID), and TblVer incrementing on `summary`.
+
+**WHEN this pipeline is idle:** right now — `PfxRcd 0` is *correct* for Session 2. The postal service is hired; nobody has mailed anything.
+
+---
+
 ## What you should be able to explain after this session
 
 1. Why does VXLAN need a control plane on top of the underlay?

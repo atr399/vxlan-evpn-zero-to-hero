@@ -55,6 +55,9 @@ watch -n 10 'docker ps --format "{{.Names}}\t{{.Status}}" | grep clab-vxlan'
 
 ## Topology (this session)
 
+![Session topology diagram](../diagrams/08-l2out.svg)
+
+
 Base fabric + the L2Out extension (new nodes in caps):
 
 ```
@@ -388,6 +391,33 @@ attached and external-attached (e.g., vMotion across racks), EVPN
 generates MAC mobility events. The receiving leaf re-advertises
 the MAC with an incremented mobility sequence number. The fabric
 converges automatically.
+
+---
+
+## Control-plane verification — an outsider joins the fabric
+
+```bash
+ssh admin@clab-vxlan-evpn-leaf1 'show mac address-table vlan 50'         # host3 learned on the trunk
+ssh admin@clab-vxlan-evpn-leaf2 'show bgp l2vpn evpn' | grep -A2 50.10   # ...and re-advertised as Type-2
+```
+host3 has no VXLAN, no BGP, no idea the fabric exists — yet its MAC/IP,
+learned classically on leaf1's trunk, appears on leaf2 as a normal
+Type-2 with leaf1's VTEP as next-hop. The L2Out boundary is invisible
+from inside the fabric: that's the proof it worked.
+
+---
+
+## Day in the life of a packet — host1 pings host3 (a host that doesn't know VXLAN exists)
+
+`10.100.10.10 → 10.100.50.10 (VLAN 50, behind the external switch)`. Arrives TTL 63.
+
+**Hops 0–2 — identical to Session 4** (bond → gateway MAC → route in Tenant-A → L3VNI 50001 to leaf1... note: VLAN 50's subnet is attached at leaf1 itself, so if the bond hashed to leaf1 there's no tunnel at all; if to leaf2, one L3VNI hop back).
+
+**Hop 3 — leaf1: route→bridge into a VLAN that leaves the fabric.** WHAT: 10.100.50.10 is directly connected on Vlan50; leaf1 ARPs, gets host3's MAC **via the trunk port Eth1/6**, rewrites, and sends the frame out **tagged VLAN 50** — plain 802.1Q, no VXLAN. WHY: the L2Out boundary is just a trunk; VXLAN ends at the leaf. VERIFY: `show mac address-table vlan 50` (host3 on Eth1/6, not nve1).
+
+**Hop 4 — external switch: dumb bridging.** WHAT: tag 50 arrives on eth1 → the `eth1.50` sub-interface strips it → br0 bridges to eth2 → host3 untagged. WHY sub-interface not vlan-filtering: Alpine has no `bridge` command (field-verified failure). VERIFY: `docker exec external ls /sys/class/net/br0/brif/` (eth1.50 + eth2).
+
+**WHEN the fabric notices host3:** the first time host3 talks, leaf1 learns its MAC classically and re-advertises it as Type-2 — from then on, every leaf reaches host3 like any fabric host. The outsider is indistinguishable from the inside.
 
 ---
 

@@ -35,6 +35,9 @@ cd ~/vxlan-evpn-zero-to-hero
 
 ## Topology (this session)
 
+![Session topology diagram](../diagrams/04-anycast-gw.svg)
+
+
 Same physical wiring. What's new: two subnets, an **anycast gateway on
 every leaf** (same IP + MAC), VRF Tenant-A, and the **L3VNI** for
 routed traffic:
@@ -168,8 +171,9 @@ You now have both kinds of VNI on the wire:
 - **L2VNI** (10010, 10020): carries **bridged** frames between leaves
   for hosts in the *same* subnet. Inner MACs are the real host MACs.
 - **L3VNI** (50001): carries **routed** packets between leaves for hosts
-  in *different* subnets. One L3VNI per VRF. Inner MACs are the anycast
-  gateway MAC (because the leaf routed, and routers rewrite L2).
+  in *different* subnets. One L3VNI per VRF. Inner MACs are the two
+  leaves' **system Router MACs** (ingress leaf's → egress leaf's) —
+  because the leaf routed, and routing rewrites L2 to next-hop addressing.
 
 Same-subnet traffic → L2VNI. Cross-subnet traffic → L3VNI. The VNI in
 the VXLAN header tells you which happened, which is why the capture is
@@ -479,10 +483,20 @@ If everything works:
   proof.**
 - The capture has VXLAN frames with **VNI 50001** (the L3VNI), not 10010
   or 10020
-- Inside the VXLAN, the **inner source and destination MACs are both the
-  anycast gateway MAC** `0000.2222.3333` — the original host MACs are
-  gone. That rewrite is the visual proof the leaf *routed* the packet
-  (routers rewrite L2 headers; bridges don't).
+- Inside the VXLAN, the **inner source/dest MACs are the two leaves'
+  system Router MACs** (leaf1's router MAC → leaf2's router MAC), **not**
+  the host MACs and **not** the anycast gateway MAC. The original host
+  MACs are gone — that rewrite is the visual proof the leaf *routed* the
+  packet (routers rewrite L2 headers; bridges don't). Each leaf's router
+  MAC is carried in BGP as the Router-MAC extended community, which is
+  how the ingress leaf knows the egress leaf's router MAC to stamp.
+
+> **Common misconception:** the inner MAC on the L3VNI is the *egress
+> leaf's router MAC*, not the anycast gateway MAC `0000.2222.3333`. The
+> anycast MAC is what the **host** sees as its gateway (host↔leaf); once
+> the leaf routes onto the L3VNI, the inner frame is addressed
+> leaf-router-MAC → leaf-router-MAC. Look for two *different* MACs in the
+> capture (one per leaf), not a doubled anycast MAC.
 
 ## What to verify
 
@@ -491,6 +505,42 @@ See [`labs/04-anycast-gw/verify.md`](../labs/04-anycast-gw/verify.md).
 ## What to break
 
 See [`labs/04-anycast-gw/break-it.md`](../labs/04-anycast-gw/break-it.md).
+
+## Control-plane verification — the Router-MAC in the wild
+
+The symmetric-IRB inner MACs (this doc's big correction) are carried in
+BGP. See them:
+```bash
+ssh admin@clab-vxlan-evpn-leaf1 'show bgp l2vpn evpn 10.100.20.10' | grep -i "router\|rt:\|encap"
+```
+Look for the **`Router MAC:`** extended community on leaf2's Type-2 —
+that exact MAC is what leaf1 stamps as inner destination on the L3VNI.
+Cross-check against `show nve interface nve1 detail | include Router`
+on leaf2: they must match. That's the control-plane→data-plane chain,
+verified in one pair of commands.
+
+> ⚠ Some references claim the router MAC also appears as a standalone
+> MAC-only Type-2 tagged with the L3VNI. On NX-OS it primarily rides as
+> the extended community; check your table before teaching the other
+> form: `show bgp l2vpn evpn | include 0.0.0.0`.
+
+---
+
+## Day in the life of a packet — host1 pings host2 (cross-subnet, symmetric IRB)
+
+`10.100.10.10 (VLAN10, leaf1) → 10.100.20.10 (VLAN20, leaf2)`. Bridge–route–route–bridge; TTL arrives **62**.
+
+**Hop 0 — host1: gateway decision.** WHAT: dst is off-subnet → host1 sends to its default gateway; ARPs for 10.100.10.1 and gets the **anycast MAC** (every leaf answers the same). WHY anycast: the host's gateway is wherever the host is — VM moves need no re-ARP. VERIFY: `docker exec host1 ip neigh` (gateway MAC = the configured anycast MAC on all leaves).
+
+**Hop 1 — leaf1: the bridge→route pivot.** WHAT: frame's dst MAC = leaf1's own gateway MAC → ASIC stops bridging, strips L2, does an L3 lookup in **VRF Tenant-A**: 10.100.20.10/32 known via Type-2, next-hop VTEP 10.0.1.22 over **L3VNI 50001**. TTL 64→63. Rewrite: inner src MAC = **leaf1's router MAC**, inner dst MAC = **leaf2's router MAC** (learned from the Router-MAC ext-community — NOT the anycast MAC). Encap VNI 50001. WHY L3VNI not the destination L2VNI: leaf1 may not even have VLAN 20 — that's the whole point of symmetric IRB. VERIFY: `show ip route 10.100.20.10 vrf Tenant-A` (segid 50001, encap VXLAN), `show bgp l2vpn evpn 10.100.20.10 | grep -i router` (the router MAC it will stamp).
+
+**Hop 2 — spine: outer transit** (as always — invisible to the story).
+
+**Hop 3 — leaf2: route again.** WHAT: decap; **VNI 50001 selects VRF Tenant-A** (the VNI *is* the VRF context on the wire); inner dst MAC = its own router MAC → route: 10.100.20.10 is directly connected on Vlan20. TTL 63→62. WHY the second routing: leaf1 couldn't L2-address a VLAN it doesn't have; leaf2 finishes the job locally. VERIFY: `show nve interface nve1 detail | include Router` on leaf2 = the MAC seen in hop 1's BGP output.
+
+**Hop 4 — leaf2: route→bridge pivot.** WHAT: ARP/adjacency for host2's real MAC, rewrite L2 for VLAN 20, deliver. VERIFY end to end: host2 sees TTL 62 and — in a two-uplink capture — inner MACs are two **different** router MACs, host MACs gone. WHEN people get this wrong: expecting the anycast MAC inside the tunnel (this doc's own original error — corrected against the live capture).
+
+---
 
 ## Quick review (flashcards)
 
@@ -504,7 +554,7 @@ concepts.
 | What is an anycast gateway? | The **same gateway IP *and* MAC on every leaf** for a subnet, so a host's gateway is always on its own leaf — no tromboning to a central router. |
 | Which two things must match across all leaves? | The anycast **IP** (per subnet) and the anycast **MAC** (`0000.2222.3333`, fabric-wide). The MAC must never drift. |
 | Why does the shared anycast MAC enable host mobility? | A moved host's ARP cache still has `0000.2222.3333`; the new leaf answers to that exact MAC — no re-ARP, no gap. |
-| L2VNI vs L3VNI? | **L2VNI** bridges same-subnet frames (inner MACs = real hosts). **L3VNI** carries routed cross-subnet packets (inner MACs = anycast gateway MAC). One L3VNI per VRF. |
+| L2VNI vs L3VNI? | **L2VNI** bridges same-subnet frames (inner MACs = real host MACs). **L3VNI** carries routed cross-subnet packets (inner MACs = the two leaves' **system Router MACs**, not the anycast MAC). One L3VNI per VRF. |
 | What is symmetric IRB? | **Both** leaves route, via a shared **L3VNI** — ingress routes source-VLAN→L3VNI, egress routes L3VNI→dest-VLAN. Same VNI both directions. |
 | Asymmetric vs symmetric IRB? | Asymmetric: only ingress leaf routes, needs every dest VLAN everywhere, doesn't scale. Symmetric: both leaves route via L3VNI, each leaf only needs its own VLANs. |
 | Why does cross-subnet TTL drop by exactly 2? | Two leaves route the packet (one decrement each). The spine only IP-routes the outer VXLAN/UDP and never touches the inner TTL. Start 64 → 62. |
@@ -521,13 +571,18 @@ concepts.
 | What fixes that? | Add `redistribute direct route-map ALL_ROUTES` — it pulls connected subnets **into** BGP; then `advertise l2vpn evpn` exports them as Type-5. Both lines required. |
 | What does `advertise-pip` do? | Makes a leaf use its **own unique loopback1 VTEP IP** (Primary IP) as the Type-5 next-hop instead of the shared anycast IP, so prefix routes point at a specific physical leaf. Essential with vPC. |
 
+| What is the bridge-route-route-bridge sequence? | The symmetric IRB packet walk: ingress leaf **bridges** (sees own gw MAC) then **routes** onto the L3VNI; egress leaf **routes** off the L3VNI then **bridges** to the local VLAN. |
+| How does the ASIC decide to bridge or route an incoming frame? | By the **inner destination MAC**. Host MAC → bridge (L2VNI). The switch's own gateway/router MAC → route (L3VNI). |
+| Why does one host's Type-2 appear twice on a remote leaf? | One advertisement, two installs: a **bridging copy** in the L2VNI table and a **routing copy** in the L3VNI/VRF table. Not a bug. |
+| What carries the egress leaf's router MAC to the ingress leaf? | The BGP **Router-MAC extended community** attached to the Type-2/Type-5 route. |
+
 ### Config lines and verification
 
 | Question | Answer |
 |----------|--------|
 | Which line makes an SVI an anycast gateway? | `fabric forwarding mode anycast-gateway` on the SVI (plus the fabric-wide `fabric forwarding anycast-gateway-mac`). |
 | In a cross-subnet capture, which VNI appears? | The **L3VNI 50001**, not the L2VNIs (10010/10020). |
-| In that capture, what are the inner source/dest MACs? | **Both the anycast gateway MAC** `0000.2222.3333` — proof the leaf routed (routers rewrite L2; bridges don't). |
+| In that capture, what are the inner source/dest MACs? | The **two leaves' system Router MACs** (ingress leaf's → egress leaf's), learned via the BGP **Router-MAC extended community**. NOT the anycast MAC — that's only the host-facing gateway MAC. Two *different* MACs, one per leaf. |
 | Capture shows ping works but pcap is empty of VXLAN — why? | ECMP hashed the flow to the **other uplink**. Capture the uplink the flow uses, or capture both `eth1` and `eth2`. |
 | How do you see Type-5 routes on a leaf? | `show bgp l2vpn evpn route-type 5` — expect one per connected subnet, originated locally and learned from the remote leaf. |
 
@@ -572,8 +627,94 @@ recurring real-world bugs:
    management bridge**. `ip route add default` silently fails. Use
    `ip route replace default`.
 
+## The packet walk (bridge–route–route–bridge)
+
+Cisco NX-OS implements **symmetric IRB**, and the canonical way to
+describe a cross-subnet flow is **bridge–route–route–bridge**. Trace
+host1 (VLAN 10, leaf1) → host2 (VLAN 20, leaf2):
+
+1. **Bridge (leaf1):** host1's frame arrives with destination MAC = the
+   anycast gateway MAC. leaf1's ASIC does an L2 lookup, sees the
+   destination MAC is *its own gateway MAC*, and concludes "this is for
+   me to route."
+2. **Route (leaf1):** leaf1 does an L3 lookup in VRF Tenant-A for host2's
+   IP. The route points across the fabric via the **L3VNI 50001**. leaf1
+   rewrites the inner Ethernet header — source = **leaf1's router MAC**,
+   destination = **leaf2's router MAC** — VXLAN-encapsulates with VNI
+   50001, and sends it to leaf2's VTEP.
+3. **Route (leaf2):** leaf2 decapsulates, sees VNI 50001 → maps to VRF
+   Tenant-A, sees the inner destination MAC is *its own* router MAC →
+   does an L3 lookup for host2's IP. The route says "directly connected,
+   VLAN 20."
+4. **Bridge (leaf2):** leaf2 ARPs (or has cached) host2's real MAC,
+   rewrites the frame for the local VLAN 20 segment, and delivers it.
+
+Two routing operations (steps 2 and 3) = the two TTL decrements you saw
+(64 → 62). The **VNI in the header carrying the VRF context** is what
+lets leaf2 know which routing table to use — that's the whole point of
+the L3VNI.
+
+> **How the ASIC decides bridge vs route:** it's the **inner destination
+> MAC**. If it's a host's MAC → bridge (L2VNI). If it's the switch's own
+> gateway/router MAC → route (L3VNI). One field decides everything.
+
+---
+
+## One Type-2 route, two operational copies
+
+When leaf2 advertises host2 as a MAC+IP Type-2 route, leaf1 installs it
+in **two** different tables:
+
+- A **bridging copy** in the L2VNI (VLAN) table — used if a local host
+  in the *same* subnet as host2 wants to reach it at L2.
+- A **routing copy** in the L3VNI (VRF) table — used when a local host
+  in a *different* subnet needs to route to host2 over the L3VNI.
+
+So the same host showing up "twice" in your `show` output isn't a bug —
+it's one advertisement sliced into the two forwarding roles symmetric
+IRB needs. (Credit: this framing came from a parallel deep-dive; it
+matches how NX-OS installs the routes.)
+
+---
+
 ## Next
 
-**Session 5**: Add a second VRF (Tenant-B), demonstrate that tenants
-in different VRFs cannot reach each other across the fabric, then
-introduce route leaking for the case where they need to.
+You've now got a routed, single-tenant fabric. Session 5 adds a **second
+tenant** and shows the isolation boundary — then deliberately punches a
+hole through it.
+
+**To advance (Model A — no redeploy, push onto the running lab):**
+
+```bash
+./scripts/switch.sh 05a-tenant-b
+```
+
+Then run the host-setup commands it prints — **host2 moves** to
+Tenant-B's `10.200.10.0/24`. The first test is an *isolation* test:
+
+```bash
+docker exec clab-vxlan-evpn-host1 ping -c 3 10.200.10.10   # SHOULD FAIL
+```
+
+That failure is the lesson — two VRFs can't reach each other by default,
+even on the same fabric. Then:
+
+```bash
+./scripts/switch.sh 05b-route-leak
+```
+
+No host changes. The *same* ping now **succeeds** — because 5b imports
+the other VRF's Route Target to leak the route. (Remember from Session
+3's RD/RT cards: RT is the import-policy knob. Session 5b is where you
+use it on purpose.)
+
+> **Preview of a Session 5 design trap:** you leak between tenants at
+> **Layer 3** (manipulating VRF Route Targets) — a safe, routed hole.
+> You do **not** merge tenants by giving two L2VNIs the same RT: that
+> fuses their broadcast domains and a storm in one wipes out the other.
+> L3 route-leak = surgical; L2 RT-merge = maximum blast radius.
+
+**What Session 5 introduces:** a second L3VNI (50002 for Tenant-B), the
+per-VRF RT import/export that controls routing isolation, and the
+difference between L2VNI RTs (which VLAN's MAC table) and VRF RTs (which
+VRF's IP routing table).

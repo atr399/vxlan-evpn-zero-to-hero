@@ -132,6 +132,9 @@ to **not** copy that into a real design.
 
 ## Topology and addressing
 
+![Session topology diagram](../diagrams/11-multisite.svg)
+
+
 **Site 1 (AS 65000):**
 
 | Node    | Role            | lo0 (RID) | lo1 (VTEP/PIP) | lo2 (VIP) |
@@ -448,6 +451,38 @@ deliberately, per-VNI, with storm control, never wholesale.
 handling across the DCI uses the BGW's multisite ingress-replication.
 Tuning this (and avoiding cross-site flooding) is a real operational
 concern at scale.
+
+---
+
+## Control-plane verification — stitching, proven in the table
+
+```bash
+# 1) BGW-to-BGW eBGP-EVPN across the DCI:
+ssh admin@clab-vxlan-evpn-spine1 'show bgp l2vpn evpn summary'    # 192.168.100.1 AS 65001, PfxRcd>0
+# 2) The re-origination signature:
+ssh admin@clab-vxlan-evpn-leaf1 'show ip route 10.100.30.0/24 vrf Tenant-A'
+#    via 10.0.2.100 (Site2 BGW VIP) - NOT 192.168.100.1 (DCI link)
+# 3) RT handling across ASNs:
+ssh admin@clab-vxlan-evpn-spine1 'show running-config bgp | include rewrite'
+#    rewrite-evpn-rt-asn on the DCI peering translates auto-RTs
+```
+Verified on this lab: the leaf1 route shows
+`via 10.0.2.100 ... segid: 50001 encap: VXLAN` — the BGW re-originated
+Site2's routes with itself as next-hop. Tunnel stitching, in one line.
+
+---
+
+## Day in the life of a packet — host1 (Site 1) pings host5 (Site 2): the stitched journey
+
+Arrives TTL 61 — one more decrement than Multi-Pod, because a **BGW routes it in the middle**.
+
+**Hop 1 — leaf1: tunnel to... the BGW, not the destination leaf.** WHAT: 10.100.30.0/24's next-hop is **10.0.2.100 — Site 2's BGW VIP** — because BGWs re-originate cross-site routes with themselves as next-hop. leaf1 encapsulates toward the BGW VIP... whose path leads out the DCI. WHY leaf1 can't tunnel to leaf4 directly: it never learns leaf4's VTEP — site-internal addresses don't cross the border. That's the fault-isolation contract. VERIFY: `show ip route 10.100.30.0/24 vrf Tenant-A` (via 10.0.2.100, segid 50001).
+
+**Hop 2 — Site 1 BGW (spine1): first stitch point.** WHAT: recognizes the destination VIP is the *remote* BGW... (in this collapsed design spine1 forwards toward 10.0.2.200 over the DCI underlay). The site-facing tunnel **terminates**; a DCI-facing tunnel **begins**. WHY terminate-and-restart instead of pass-through: the BGW is the policy/failure boundary — BUM, RTs (`rewrite-evpn-rt-asn`), and next-hops are all translated here. VERIFY: `show nve interface nve1 detail | include Multisite` (bgw-if lo2 Up), `show bgp l2vpn evpn summary` (the AS-65001 DCI peer).
+
+**Hop 3 — Site 2 BGW (spine5): second stitch.** WHAT: decaps the DCI tunnel, routes (TTL — the decrement Multi-Pod doesn't have), re-encapsulates into Site 2's *internal* tunnel toward leaf4's real VTEP. WHY the RTT shows it (50–115 ms vs 10–18 ms cross-pod): two full decap/encap cycles plus DCI transit.
+
+**Hop 4 — leaf4: ordinary egress.** Session-4 ending, unaware the packet crossed an organizational boundary. **WHEN to reach for this walk:** any time someone asks "Multi-Pod vs Multi-Site" — answer with hop 1's next-hop field. Preserved = Pod. Rewritten = Site.
 
 ---
 

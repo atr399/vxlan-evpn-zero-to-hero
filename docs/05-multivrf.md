@@ -334,6 +334,35 @@ direction. That's a nuance most VXLAN guides skip.
 
 ---
 
+## Control-plane verification — watching the leak happen
+
+**Import fan-out (before/after 5b):**
+```bash
+ssh admin@clab-vxlan-evpn-leaf1 'show bgp l2vpn evpn 10.200.10.10' | grep -i import
+```
+The `Imported to N destination(s)` count **rises when you apply 5b** —
+the leak visible in the control plane before any ping.
+
+**The dual-RT mechanism (⚠ settle it empirically):** the non-`evpn`
+import line is documented by Cisco as applying to the VPNv4/VPNv6
+address families, yet removing it kills the local leak. Break-it test:
+on one leaf remove only `route-target import 65000:50002` (keep the
+`evpn` one). Predicted: route still in `show bgp l2vpn evpn`, gone from
+`show ip route vrf Tenant-A`, ping dead. Re-add, confirm recovery.
+
+**Routing isolation signature:** route visible in EVPN table but absent
+from the VRF's IP table = RT import missing at the VRF boundary.
+
+---
+
+## Day in the life of a packet — host1 (Tenant-A) pings host2 (Tenant-B) through the leak
+
+Same walk as Session 4 with ONE different step — worth isolating. Arrives TTL 63 here (leaked route resolves via the local SVI path).
+
+**The step that changes — leaf1's L3 lookup.** WHAT: dst 10.200.10.10 is in Tenant-B's subnet, but the lookup happens in **Tenant-A's** VRF — and finds it, `via 10.200.10.1%Tenant-B` — because 5b imported Tenant-B's RT into Tenant-A at BOTH boundaries (the `evpn` line admits it from the EVPN table; the plain line admits it into the VRF's IP table). WHY two doors: the route crosses two table boundaries; miss either and it half-works (visible in EVPN, absent from the VRF — the classic signature). VERIFY: `show ip route 10.200.10.0/24 vrf Tenant-A` (note the `%Tenant-B` — inter-VRF next-hop), and the import fan-out: `show bgp l2vpn evpn 10.200.10.10 | grep -i import` count rises when 5b lands. WHEN isolation is correct behavior: 5a — the same lookup MISSES and the packet dies at hop 1 with ICMP unreachable. That failure is the tenant boundary working.
+
+---
+
 ## What you should be able to explain after Session 5
 
 1. What is a VRF and why does VXLAN-EVPN use them?

@@ -115,6 +115,9 @@ ip route replace default via 203.0.113.1
 
 ## Topology (this session)
 
+![Session topology diagram](../diagrams/09-l3out.svg)
+
+
 Base fabric + the L3Out edge (new nodes in caps):
 
 ```
@@ -396,6 +399,34 @@ to avoid loops.
 this session: Tenant-B hosts can reach external networks via
 Tenant-A's L3Out, even though Tenant-B has no L3Out itself. Useful
 for shared services (DNS, NTP, etc. behind a single L3Out).
+
+---
+
+## Control-plane verification — Type-5 anatomy
+
+```bash
+ssh admin@clab-vxlan-evpn-leaf2 'show bgp l2vpn evpn route-type 5' | head -30
+```
+Find `203.0.113.0/24`: **Gateway IP 0.0.0.0** means "attached at the
+advertising VTEP — forward to the route's next-hop." A non-zero gateway
+IP would mean recursive hand-off (e.g. a firewall behind the border
+leaf). Confirm the install chain: the same prefix in
+`show ip route vrf Tenant-A` on leaf2 shows next-hop = leaf1's VTEP
+with `encap: VXLAN` — external route, fabric delivery.
+
+---
+
+## Day in the life of a packet — host1 pings 203.0.113.10 (leaves the fabric entirely)
+
+Arrives TTL 62: three routers touch it (leaf-in, border re-route... actually count them below).
+
+**Hop 1 — ingress leaf: Type-5 lookup.** WHAT: 203.0.113.0/24 in Tenant-A came from a **Type-5** (prefix) route, next-hop = the border VTEP. If host1's bond hashed to leaf2: encap L3VNI 50001 toward leaf1. WHY Type-5 not Type-2: the outside world has no per-host MAC/IP pairs to advertise — it hands over subnets. VERIFY: `show bgp l2vpn evpn route-type 5` (gateway IP 0.0.0.0 = attached at the advertiser), `show ip route 203.0.113.0/24 vrf Tenant-A`.
+
+**Hop 2 — border leaf1: decap, route OUT of the overlay.** WHAT: VNI 50001 → Tenant-A; lookup says via 192.0.2.0 (the extrouter) — a plain routed interface. The packet leaves as ordinary IP; VXLAN is gone. WHY the VRF matters here: the eBGP session to the extrouter lives **inside Tenant-A** (`show bgp vrf Tenant-A ipv4 unicast summary`) — the handoff is per-tenant. VERIFY: that summary (Established, PfxRcd 1).
+
+**Hop 3 — extrouter (cEOS): the outside world.** WHAT: routes to its connected 203.0.113.0/24, delivers to host_internet. It learned 10.100.10.0/24 via plain eBGP — it has no idea EVPN exists. WHY that's the design win: standard IP peering at the edge; the fabric's complexity never leaks out.
+
+**The return — WHEN asymmetry appears.** The reply enters at leaf1, gets re-originated... no — it *routes* in Tenant-A toward host1: if host1's route points at the **vPC VIP**, the underlay may deliver the return to *either* vPC member. Full path symmetry is never guaranteed; only reachability is. Host2's version of this walk adds one more step at hop 1: the leak (its VRF imported the Type-5 through Tenant-A's RT).
 
 ---
 

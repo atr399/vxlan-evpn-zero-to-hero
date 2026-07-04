@@ -32,6 +32,9 @@ as printed in the doc below.
 
 ## Topology (this session)
 
+![Session topology diagram](../diagrams/03-l2vni.svg)
+
+
 Same physical wiring. What's new: VLAN 10 mapped to **L2VNI 10010** on
 both leaves, hosts in one stretched subnet, and the first VXLAN tunnel:
 
@@ -493,6 +496,47 @@ Highlights:
   the most confusing way possible
 - Bring an extra host MAC onto leaf1 and watch the EVPN Type-2 route
   for it appear in real time
+
+## Control-plane verification — decoding what you built
+
+**Read a raw Type-2 route:**
+```bash
+ssh admin@clab-vxlan-evpn-leaf1 'show bgp l2vpn evpn' | head -40
+```
+```
+[2]:[0]:[0]:[48]:[aac1.ab5e.c305]:[32]:[10.100.10.10]/272
+ type-2      MAC len   host MAC    IP len   host IP
+```
+A MAC-only Type-2 shows `[0]:[0.0.0.0]` — the leaf learned the MAC but
+has no ARP yet (a *silent host*).
+
+**The extended communities that matter:**
+```bash
+ssh admin@clab-vxlan-evpn-leaf1 'show bgp l2vpn evpn 10.100.10.11' | sed -n '/Advertised/,$p'
+```
+| Community | Meaning |
+|---|---|
+| `RT:65000:10010` | which L2VNI imports this route |
+| `ENCAP:8` | data-plane instruction: use **VXLAN** (tunnel type 8) |
+
+**Type-3 (IMET):** `show bgp l2vpn evpn route-type 3` — one per VTEP per
+VNI; this is the ingress-replication flood list being built.
+
+---
+
+## Day in the life of a packet — host1 pings host2 (same subnet, different leaves)
+
+`10.100.10.10 → 10.100.10.11`, VLAN 10 both ends. One bridged flow, zero routing — TTL arrives 64.
+
+**Hop 0 — host1: ARP first.** WHAT: same-subnet → host1 ARPs for host2's MAC directly (no gateway involved). The ARP broadcast is BUM traffic → leaf1 ingress-replicates it to every VTEP in VNI 10010's flood list. WHY the flood list exists: Type-3 IMET routes. VERIFY: `show bgp l2vpn evpn route-type 3`. WHEN suppression kicks in: only after Session 4 (ARP suppression needs the SVI).
+
+**Hop 1 — leaf1: bridge + encap.** WHAT: frame arrives, dst MAC = host2's real MAC; L2 lookup in VLAN 10 finds it learned via BGP → next-hop VTEP 10.0.1.22. Encap: outer IP 10.0.1.21→10.0.1.22, UDP dst 4789, **VNI 10010**, inner frame untouched. WHY the MAC was already known pre-traffic: leaf2 advertised host2 as Type-2 the moment it learned it — that's `host-reachability protocol bgp`. VERIFY: `show l2route evpn mac evi 10` (host2's MAC, next-hop 10.0.1.22), `show nve peers` (10.0.1.22 Up).
+
+**Hop 2 — spine: routes the OUTER header only.** WHAT: sees IP 10.0.1.21→10.0.1.22, forwards. It cannot see VNI, inner MACs, or the ICMP. WHY: VXLAN is just UDP to the underlay. VERIFY: capture on a leaf uplink — outer/UDP 4789/VNI visible, spine config untouched by session 3.
+
+**Hop 3 — leaf2: decap + bridge.** WHAT: VNI 10010 → VLAN 10, inner dst MAC = host2 (a local port) → deliver. No TTL change anywhere: **bridges don't touch IP**. VERIFY the proof: host2 sees TTL 64; `show mac address-table vlan 10` on leaf2 shows host1's MAC pointing at nve1 (learned from the tunnel).
+
+---
 
 ## Quick review (flashcards)
 

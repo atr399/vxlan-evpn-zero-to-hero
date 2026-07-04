@@ -47,6 +47,9 @@ cd ~/vxlan-evpn-zero-to-hero
 
 ## Topology (this session)
 
+![Session topology diagram](../diagrams/06-vpc.svg)
+
+
 The dormant links from Session 1 finally light up. vPC detail view:
 
 ```
@@ -397,6 +400,31 @@ one of its NICs went down — the bond keeps working.
 
 This is the entire reason vPC exists. Production fabrics rely on
 this for chassis maintenance, hardware failures, software upgrades.
+
+---
+
+## Control-plane verification — vPC's fingerprints in BGP
+
+```bash
+ssh admin@clab-vxlan-evpn-leaf1 'show bgp l2vpn evpn 10.100.10.10' | grep -i "soo\|next"
+```
+Two things to find on host1's route after 6c: next-hop = the **shared
+VIP 10.0.1.100** (the pair advertises as one VTEP), and the **SOO**
+(Site-of-Origin) extended community — the peer leaf drops routes
+carrying its own SOO (BGP split-horizon), which is how vPC prevents
+routing loops without a special data-plane hack.
+
+---
+
+## Day in the life of a packet — host1's frame with TWO possible first hops
+
+After 6c, host1's bond hashes each flow to eth1 (leaf1) **or** eth2 (leaf2). Follow one that picks eth2.
+
+**Hop 0 — host1 bond: member selection.** WHAT: LACP bond hashes the flow → eth2 → arrives at **leaf2**. WHY either leaf must serve equally: both run the same anycast gateway and both advertise the shared VTEP VIP. VERIFY: `cat /proc/net/bonding/bond0` (both slaves up, one Aggregator ID).
+
+**Hop 1 — leaf2 (not leaf1!): routes it exactly like Session 4.** WHAT: gateway MAC match → VRF lookup → L3VNI. The far end can't tell which vPC member handled it: the outer source is the **VIP 10.0.1.100**, not leaf2's own lo1. WHY: remote leaves must see ONE VTEP for the pair, or host1's MAC would flap between two next-hops on every hash change. VERIFY: `show nve interface nve1 detail` (VPC-VIP-Only, secondary 10.0.1.100); on a remote leaf, host1's Type-2 next-hop = 10.0.1.100.
+
+**The return packet — WHEN ECMP meets anycast.** WHAT: the reply targets VIP 10.0.1.100, which BOTH leaves advertise into the underlay → the underlay ECMPs it to *either* member; whichever receives it decaps and delivers over the bond (or, if the host link on that member is down, across the **peer-link** — the `(*) forwarding via vPC peer-link` legend you saw). WHY split-horizon is needed: routes the pair advertises carry **SOO**; a member drops routes with its own SOO instead of looping them back. VERIFY: `show bgp l2vpn evpn 10.100.10.10 | grep -i soo`.
 
 ---
 

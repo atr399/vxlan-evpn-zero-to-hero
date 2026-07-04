@@ -243,6 +243,26 @@ addressing. Same protocol mechanics, just bigger numbers.
 
 ---
 
+## Control-plane verification — the underlay swap, proven
+
+```bash
+ssh admin@clab-vxlan-evpn-leaf1 'show ip route 10.0.1.22'
+#   was: ospf-UNDERLAY, intra    now: bgp-65011, external, tag 65002
+ssh admin@clab-vxlan-evpn-leaf1 'show bgp l2vpn evpn summary'
+#   overlay iBGP-EVPN to the spines: UNCHANGED (still AS 65000 sessions)
+```
+The route source flipping from `ospf` to `bgp ... external` while the
+EVPN summary is untouched is the whole lesson in two commands: the
+overlay only consumes VTEP reachability — it never asks who provides it.
+
+---
+
+## Day in the life of a packet — same packet, new roads
+
+Take Session 5's leaked cross-tenant packet and re-run it after the swap: **every hop is identical except one lookup's *source*.** At hop 1, leaf1's recursive resolution of the remote VTEP (10.0.1.22) now returns `bgp-65011, external` instead of `ospf-UNDERLAY, intra` — different protocol, same next-hop interface, same encap, same TTLs. WHY nothing else changed: the overlay consumes exactly one product from the underlay — VTEP-loopback reachability — and never asks how it was made. VERIFY the before/after in one command: `show ip route 10.0.1.22` (route source line). WHEN the swap is visible to hosts: only during the ~30–60 s convergence window mid-push — after that, invisible.
+
+---
+
 ## What you should be able to explain after Session 7
 
 1. Why hyperscalers use eBGP underlay instead of OSPF

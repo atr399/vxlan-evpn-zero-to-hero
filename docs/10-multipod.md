@@ -105,6 +105,9 @@ external connectivity and the others reach it over the fabric.
 
 ## Topology and addressing
 
+![Session topology diagram](../diagrams/10-multipod.svg)
+
+
 **Pod 1 (AS 65000):** spine1 (10.0.0.11), spine2 (10.0.0.12), leaf1
 (10.0.0.21 / VTEP 10.0.1.21), leaf2 (10.0.0.22 / VTEP 10.0.1.22), plus
 hosts and the L2Out/L3Out edge from Sessions 8–9.
@@ -446,6 +449,32 @@ genuinely separate ASNs.
 In reality pods are often different ages, NX-OS versions, and hardware —
 Multi-Pod is a migration pattern as much as a scale pattern. You can
 stand up a new pod with a newer design while old pods keep running.
+
+---
+
+## Control-plane verification — one control plane, two pods
+
+```bash
+docker exec clab-vxlan-evpn-ipn Cli -p15 -c 'show ip ospf neighbor'   # 4x FULL first!
+ssh admin@clab-vxlan-evpn-spine1 'show bgp l2vpn evpn summary'        # spine3 (10.0.0.13) Established
+ssh admin@clab-vxlan-evpn-leaf1  'show bgp l2vpn evpn 10.100.20.20' | grep -i next
+```
+The Multi-Pod signature: host4's route on a Pod-1 leaf carries **leaf3's
+original VTEP as next-hop, unmodified** — one continuous tunnel, one
+fault domain. Contrast with Session 11, where the border *rewrites* the
+next-hop. That single field is the Pod-vs-Site difference made visible.
+
+---
+
+## Day in the life of a packet — host1 (Pod 1) pings host4 (Pod 2)
+
+Arrives TTL 62 — the SAME hop count as intra-pod Session 4. That's the headline: Multi-Pod adds distance, not routing hops.
+
+**Hop 1 — leaf1: nothing special.** WHAT: 10.100.20.20 is a Type-2 in Tenant-A, next-hop = **leaf3's own VTEP (10.0.1.23)**, encap L3VNI 50001. WHY unremarkable: one BGP control plane spans both pods — leaf3's routes arrive with their original next-hop intact (spine1↔spine3 EVPN peering over the IPN just relays them). VERIFY: `show bgp l2vpn evpn 10.100.20.20 | grep -i next` (next-hop 10.0.1.23, unmodified).
+
+**Hops 2–4 — the underlay stretch: spine1 → IPN → spine3.** WHAT: the OUTER packet (10.0.1.100→10.0.1.23) rides ordinary OSPF routing across the IPN; the VXLAN tunnel passes *through* unopened. WHY latency jumps (10–18 ms vs ~3 ms): more physical hops, same logical tunnel. WHEN this path doesn't exist: IPN OSPF stuck in EXCH START (the MTU 9214 bounce) — the tunnel has no road. VERIFY: `docker exec clab-vxlan-evpn-ipn Cli -p15 -c 'show ip ospf neighbor'` (4x FULL), traceroute the outer path if curious.
+
+**Hop 5 — leaf3: decap and deliver** exactly as Session 4's egress. One fault domain, one tunnel, TTL only ever touched twice. Contrast with the next session, where the border **opens** the tunnel — and the next-hop changes.
 
 ---
 
