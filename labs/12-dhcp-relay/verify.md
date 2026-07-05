@@ -1,126 +1,39 @@
-# Session 12 — Verify: What Good Looks Like
+# Session 12 - Verify (all outputs field-verified 2026-07-05)
 
-Teaching doc: [`docs/12-dhcp-relay.md`](../../docs/12-dhcp-relay.md).
-Bring-up: [`docs/DEPLOYMENT.md`](../../docs/DEPLOYMENT.md) (Model B).
+## 0. Server host (host2, VLAN 20) - Kea, NOT dnsmasq (see doc: dnsmasq
+##    2.91 cannot handle NX-OS's RFC-5107 server-ID override, even in
+##    dhcp-proxy mode - verified failure)
+    # Install packages BEFORE fabric host-setup, or flip default to eth0:
+    docker exec clab-vxlan-evpn-host2 sh -c 'ip route replace default via 172.20.20.1 dev eth0; apk add --no-cache kea-dhcp4; ip route replace default via 10.100.20.1 dev eth1'
+    docker exec clab-vxlan-evpn-host2 mkdir -p /run/kea    # Kea fatal-errors without it
+Kea config: subnet 10.100.10.0/24, pool .100-.150, routers 10.100.10.1,
+and the key line ->  "relay": { "ip-addresses": [ "10.99.99.1" ] }
+(explicit giaddr->subnet mapping; no reliance on option-82 interpretation)
+Run foreground:  docker exec -it clab-vxlan-evpn-host2 kea-dhcp4 -c /etc/kea/kea-dhcp4.conf
+Expect: DHCP4_STARTED, listening on eth1.
 
-`show` on the Nexus via `ssh admin@clab-vxlan-evpn-<node>` (password
-`admin`). The DHCP server and clients are Alpine containers driven with
-`docker exec`.
+## 1. The ask
+    docker exec clab-vxlan-evpn-host1 sh -c 'ip addr flush dev eth1; ip link set eth1 up; timeout 25 udhcpc -i eth1 -n -q'
+SUCCESS = the word "obtained":  lease of 10.100.10.100 obtained from 10.100.10.1
+(exit code alone can lie - a Ctrl-C also gives 0.)
 
----
+## 2. Kea narrates the DORA
+DHCPDISCOVER received from 10.99.99.1 -> DHCP4_LEASE_OFFER ->
+DHCPREQUEST -> DHCP4_LEASE_ALLOC -> DHCPACK to 10.99.99.1.
+The "from 10.99.99.1" is the unique giaddr doing its job.
 
-## 0. Lab up + DHCP server running
+## 3. Relay counters on leaf1
+    ssh admin@clab-vxlan-evpn-leaf1 'show ip dhcp relay statistics'
+Want: Discover/Offer/Request/Ack all Rx=Tx and Ack >= 1.
+Drops with "Option 82 validation failed" = the information-option lines
+are missing (the NX-OS coupling - see break-it #3).
 
-```bash
-docker ps --format '{{.Names}}\t{{.Status}}' | grep clab-vxlan
-docker exec clab-vxlan-evpn-dhcp-server sh -c 'pgrep dnsmasq && echo "dnsmasq up"'
-```
+## 4. The leased host actually works
+    docker exec clab-vxlan-evpn-host1 ip route          # default via 10.100.10.1 FROM THE LEASE
+    docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.10.1     # TTL 255
+    docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.20.10    # TTL 62 - symmetric IRB on a DHCP'd address
 
-✅ All n9kv `(healthy)`, dnsmasq running on the server host with
-`10.99.99.10` on its lab interface.
-
----
-
-## 1. Relay configured on the client SVIs
-
-On **leaf1**:
-
-```
-show running-config interface Vlan10
-```
-
-✅ Expect under `interface Vlan10`:
-- `ip dhcp relay address 10.99.99.10`
-- `ip dhcp relay source-interface loopback99`
-- `fabric forwarding mode anycast-gateway` (still there — both coexist)
-
-```
-show ip dhcp relay
-show ip dhcp relay information option
-```
-
-✅ Relay enabled, Option 82 on, vpn sub-option on.
-
----
-
-## 2. The unique relay loopback exists and is in the tenant VRF
-
-On **leaf1**:
-
-```
-show running-config interface loopback99
-show ip route 10.99.0.21/32 vrf Tenant-A
-```
-
-✅ `loopback99` is `vrf member Tenant-A`, IP `10.99.0.21/32` (leaf2:
-`.22`). It's a unique address — NOT the anycast `10.100.10.1`.
-
-```
-show bgp l2vpn evpn | include 10.99.0.21
-```
-
-✅ The loopback is advertised into EVPN (Type-5), so the server's reply
-can route back to *this* leaf.
-
----
-
-## 3. Client gets a lease in the correct scope ⭐
-
-```bash
-docker exec clab-vxlan-evpn-host1 sh -c 'ip addr flush dev eth1; udhcpc -i eth1 -n'
-docker exec clab-vxlan-evpn-host1 ip addr show eth1
-docker exec clab-vxlan-evpn-host1 ip route
-```
-
-✅ host1 receives an address in **`10.100.10.100–200`** (VLAN 10 scope),
-default route via `10.100.10.1`. Repeat for host2 → expect
-`10.100.20.100–200`.
-
-❌ If host1 gets an address in the `10.99.x` range, the server is
-keying on `giaddr` instead of the link-selection sub-option — Option 82
-handling is wrong (see break-it #3).
-
----
-
-## 4. The server logged the right giaddr + link selection
-
-```bash
-docker exec clab-vxlan-evpn-dhcp-server sh -c 'logread 2>/dev/null | grep -i dhcp | tail -25'
-```
-
-✅ Look for the DORA exchange (DISCOVER / OFFER / REQUEST / ACK) and:
-- `giaddr` = `10.99.0.21` (leaf1's relay loopback) — NOT `10.100.10.1`
-- a link-selection sub-option carrying the client subnet
-  `10.100.10.0`
-
-This is the proof that `giaddr` (reachability) and scope selection
-(link-selection) are correctly *split*.
-
----
-
-## 5. End-to-end: the leased host actually works
-
-```bash
-docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.10.1          # its anycast gw
-docker exec clab-vxlan-evpn-host1 ping -c 3 10.100.20.100        # host2's leased addr (cross-subnet)
-```
-
-✅ Both succeed. A DHCP-assigned host behaves exactly like a static one
-— the point of the whole exercise.
-
----
-
-## Quick all-in-one snippet
-
-```bash
-echo "=== leaf1 relay config ==="
-sshpass -p admin ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR \
-  admin@clab-vxlan-evpn-leaf1 \
-  'show running-config interface Vlan10 | include "dhcp relay"'
-
-echo "=== lease ==="
-docker exec clab-vxlan-evpn-host1 sh -c 'ip addr flush dev eth1; udhcpc -i eth1 -n; ip addr show eth1 | grep inet'
-
-echo "=== server log tail ==="
-docker exec clab-vxlan-evpn-dhcp-server sh -c 'logread 2>/dev/null | grep -i dhcp | tail -8'
-```
+## Client note
+Client sees "server 10.100.10.1" (the NX-OS server-ID override) even
+though the real server is 10.100.20.10 - that is RFC 5107 working as
+designed: renewals go via the relay/SVI, not directly to the server.

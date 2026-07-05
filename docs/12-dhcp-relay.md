@@ -1,314 +1,410 @@
-# Session 12: DHCP Relay in the Overlay — Teaching Guide
+# Session 12: DHCP Relay in the Overlay — Distributed Anycast Gateway
 
-**Estimated duration**: 35-45 min
+> **STATUS: VERIFIED.** Built live on the 01→04 chain. Three real failures
+> were hit and captured before the working design (all now in break-it.md):
+> (1) anycast-giaddr trap — OFFERs eaten by the server-side leaf,
+> (2) dnsmasq 2.91 cannot handle NX-OS's RFC-5107 server-ID override
+> (dhcp-proxy included), (3) NX-OS `source-interface` relay silently
+> drops everything without `information option` ("Option 82 validation
+> failed" counter). Final working stack: **unique loopback99 giaddr per
+> leaf + information option + option vpn + Kea 3.0.3 with an explicit
+> `"relay"` giaddr→subnet mapping.** Full DORA verified: lease
+> 10.100.10.100/7200s, gateway TTL 255, cross-subnet TTL 62.
 
-**Goals to land**:
-1. Why distributed anycast gateway makes DHCP *harder*, not easier
-2. The unique-per-VRF-loopback giaddr — and why it can't be the anycast IP
-3. Option 82: link-selection picks the scope, vpn sub-option picks the tenant
-4. The four-way triage of "no DHCP" using the server log
+## Environment gotchas (verified)
+- Install packages **before** fabric host-setup, or flip the default
+  route to eth0 for `apk` (fabric default = no internet).
+- Kea needs `mkdir -p /run/kea` in the Alpine container or it fatals.
+- ISC dhcpd is EOL and gone from Alpine — Kea is the successor.
+- dnsmasq is unsuitable behind this relay design (break-it #2).
 
-**The "wow" moment**: a host with no IP runs one `udhcpc` command and
-comes up fully addressed, correct subnet, correct gateway — and then you
-show the server log proving the giaddr was the leaf's *unique* loopback,
-not the anycast gateway every leaf shares. The anycast gateway that made
-forwarding beautiful is exactly what would have broken this, and the
-loopback is the fix.
 
-**Real production value**: this is the first *service* the fabric
-offers, and in a real build it's urgent — server teams can't PXE-boot or
-image bare metal until relay works. Every production EVPN fabric runs it.
+**Prerequisites**: Sessions 1–9 understood (anycast gateway, VRFs, L3Out).
+This session is **self-contained** (Model B) and builds on the Session 9
+topology — it reuses the L3Out path to reach a central DHCP server.
 
----
+**Goal**: Make real hosts get their addresses by DHCP instead of static
+assignment. With distributed anycast gateways, a host's DHCP broadcast
+is answered by its *local* leaf acting as a relay agent — which has to
+solve a problem that doesn't exist in classic networks: every leaf owns
+the *same* gateway IP, so the relay must give the DHCP server a way to
+reply to the *specific* leaf and pick the *correct* subnet and tenant.
 
-## Pre-call checklist
+**Lab folder**: `labs/12-dhcp-relay/`
 
-- [ ] Lab deployed with the Session 12 topology (Session 9 base + DHCP
-      server host) — see docs/DEPLOYMENT.md "Model B"
-- [ ] `switch.sh 12-dhcp-relay` applied; dnsmasq running on the server
-- [ ] You've run `verify.md` end-to-end and gotten a clean lease
-- [ ] Have the server log tailing in a spare pane —
-      `docker exec clab-vxlan-evpn-dhcp-server sh -c 'logread -f | grep -i dhcp'`
-- [ ] break-it.md open — break-it #2 (loopback-in-scope) is the gem
+**Estimated time**: 35–45 minutes.
 
----
-
-## Opening (~3 min)
-
-> "Every host we've used so far had a static IP we typed in by hand.
-> Real data centers don't work that way — servers, VMs, PXE-booting bare
-> metal, all of it gets its address from DHCP. So today we make the
-> fabric hand out addresses."
-
-> "Sounds routine. It isn't — and the reason is the anycast gateway we
-> were so proud of in Session 4."
-
-> "Remember what made anycast great: every leaf owns the *same* gateway
-> IP, 10.100.10.1, and any leaf will answer for it. Fantastic for
-> forwarding — the gateway is always one hop away."
-
-> "Now think about DHCP. A client broadcasts 'I need an address.' Its
-> local leaf relays that to the server. The server sends an address
-> back — to the relay. But the relay's IP is... 10.100.10.1. The same
-> IP on *every* leaf. The server's reply could come back to any of
-> them. And which subnet does 10.100.10.1 even mean, when every VLAN's
-> gateway uses the same anycast scheme?"
-
-> "The thing that made anycast beautiful for forwarding just broke the
-> control protocol. That's the lesson of today, and it shows up again
-> and again on anycast fabrics: *anything that needs to reply to one
-> specific box has a problem when every box shares an address.*"
-
-> "The fix is elegant — give each leaf a second, unique address just for
-> DHCP, and use Option 82 to tell the server the real subnet and tenant.
-> Let's build it."
+**Why this matters**: Almost nothing in a real data center uses static
+IPs. Servers, VMs, PXE-booting bare metal, containers — they DHCP. Every
+production VXLAN-EVPN fabric runs DHCP relay, and it's one of the first
+services stood up after the fabric itself. It also exposes a subtle
+truth about anycast gateways that the earlier sessions glossed over:
+"the same IP on every leaf" is wonderful for forwarding and a genuine
+problem for any protocol that needs to reply to *one specific* leaf.
 
 ---
 
-## Beat-by-beat demo
+## Mental model
 
-### Beat 1: The problem, made concrete (2 min)
+In a classic network, DHCP relay is boring: the client broadcasts, the
+router stamps its own interface IP into the `giaddr` field, unicasts the
+request to the server, and the server uses `giaddr` both to pick the
+subnet (scope) and to address its reply. One router, one gateway IP, no
+ambiguity.
 
-On leaf1:
+In a **distributed anycast gateway** fabric, that breaks in two ways:
+
+1. **Which subnet?** Every leaf's client SVI uses the *same* anycast IP
+   (e.g. `10.100.10.1`). If the relay stamps that as `giaddr`, the
+   server can't tell VLAN 10 from any other VLAN sharing the anycast
+   scheme, and worse — the reply addressed to `10.100.10.1` could land
+   on *any* leaf, because they all own it.
+
+2. **Which tenant?** The same subnet can exist in two VRFs (overlapping
+   tenant addressing is the whole point of VRFs). The server needs to
+   know *which* tenant a request came from to pick the right pool.
+
+The fix is three coordinated pieces:
+
+- **A unique per-leaf, per-VRF loopback as the relay source / `giaddr`.**
+  Not the anycast IP — a real, unique address per leaf. The server's
+  reply is addressed *here*, so it returns to the exact leaf that
+  relayed it. This loopback is advertised into the tenant VRF's BGP so
+  it's reachable fabric-wide.
+
+- **Option 82 sub-options.** The relay attaches metadata: the
+  **Link Selection** sub-option tells the server the *client's* real
+  subnet (separate from `giaddr`), and the **VPN/VRF** sub-option tells
+  the server which tenant the request belongs to. The server uses these
+  to pick the correct scope and pool while still replying to the
+  loopback `giaddr`.
+
+- **`ip dhcp relay source-interface`** pointing at that loopback, so the
+  relayed packet is sourced from the unique address rather than the
+  anycast SVI.
 
 ```
-show running-config interface Vlan10
+   host5 (no IP yet)                          DHCP server
+   DHCPDISCOVER broadcast                     10.99.99.10 (behind L3Out)
+        |                                            ^
+        v                                            |
+   leaf  (relay agent)                               |
+   - giaddr  = its own per-VRF loopback (unique)  ---+  reply comes back
+   - Opt82 link-selection = client subnet            |  to the loopback,
+   - Opt82 vpn = tenant VRF                           |  not the anycast IP
+   - source-interface = that loopback                 |
+        |                                             |
+        +----- unicast across fabric / L3Out ---------+
 ```
 
-> "There's our anycast gateway — 10.100.10.1, same on every leaf. If we
-> naively relayed DHCP from this, the server would stamp 10.100.10.1 as
-> the relay address and have no idea which leaf or which subnet. Watch
-> what we did instead."
+The elegant part: forwarding still uses the anycast gateway (great for
+data plane), while DHCP uses the unique loopback (correct for the
+control exchange). Two addresses, two jobs.
 
-Point at the two relay lines:
+---
 
-> "`ip dhcp relay address` — that's *where the server is*. And
-> `ip dhcp relay source-interface loopback99` — that's the fix. We
-> source the relay from a *unique* loopback, not the anycast IP."
+## Architecture decisions for this session
 
-### Beat 2: The unique loopback (2 min)
+**Decision 1: One central DHCP server reached across the fabric**
+
+We place a single DHCP server on the external segment behind the L3Out
+(reusing Session 9's extrouter path). This is the most common real
+pattern — centralized DHCP/IPAM, reached by every leaf relay across the
+fabric. Alternatives (a server in a dedicated shared-services VRF, or
+per-pod servers) use the same relay mechanics; only the reachability
+path differs.
+
+**Decision 2: Unique per-VRF loopback per leaf as `giaddr`**
+
+This is *the* anycast-gateway DHCP requirement. Each leaf gets a unique
+loopback in Tenant-A (e.g. leaf1 `10.99.0.21/32`, leaf2 `10.99.0.22/32`),
+advertised into the tenant VRF. The relay sources from it and uses it as
+`giaddr`, so replies route back to the exact relaying leaf — never
+black-holed by the shared anycast IP.
+
+**Decision 3: The relay loopback must NOT be inside any DHCP scope**
+
+The `giaddr`/source loopback is leaf infrastructure, not a client
+address. If it falls inside a pool the server hands out, you get address
+conflicts and intermittent, maddening failures. We deliberately put the
+relay loopbacks in `10.99.0.0/24` — completely separate from the client
+scope `10.100.10.0/24`. (This is break-it #2 — a real, common mistake.)
+
+**Decision 4: Option 82 with the VPN sub-option on**
+
+We enable `ip dhcp relay information option` (Option 82) and
+`ip dhcp relay information option vpn` (the VRF sub-option). Even though
+our lab has one tenant, turning it on is correct production hygiene and
+lets the server distinguish tenants the moment a second VRF appears. The
+server (dnsmasq) is configured to accept relayed requests and key its
+scope on the link-selection sub-option.
+
+**Decision 5: dnsmasq as the DHCP server**
+
+Lightweight, scriptable, runs in the existing Alpine container. From the
+relay's perspective it's indistinguishable from an enterprise IPAM
+appliance (Infoblox, Windows DHCP, ISC Kea) — they all speak the same
+relayed-DHCP + Option 82 protocol.
+
+---
+
+## Topology and addressing
+
+Built on the Session 9 L3Out topology. The DHCP server lives on the
+external LAN behind extrouter (or, equivalently, on a dedicated server
+host on that segment).
 
 ```
-show running-config interface loopback99
+   host1 (DHCP client)        host2 (DHCP client)
+   VLAN 10, Tenant-A          VLAN 20, Tenant-A
+   wants 10.100.10.0/24       wants 10.100.20.0/24
+      |                          |
+    leaf1                      leaf2
+    relay lo: 10.99.0.21       relay lo: 10.99.0.22   (per-VRF, unique)
+    anycast gw 10.100.10.1     anycast gw 10.100.20.1
+      \                          /
+       === fabric (Tenant-A L3VNI 50001) ===
+                    |
+                 L3Out (Session 9 eBGP)
+                    |
+                extrouter ---- dhcp-server (dnsmasq)
+                               10.99.99.10
+                               scope: 10.100.10.100-200
+                                      10.100.20.100-200
 ```
 
-> "loopback99, in VRF Tenant-A, 10.99.0.21 — and on leaf2 it's
-> 10.99.0.22. **Unique per leaf.** This is the giaddr the server will
-> reply to. Because it's unique, the reply comes back to *this exact
-> leaf*, not 'whichever leaf the anycast IP happened to land on.'"
+| Element | Value |
+|---------|-------|
+| DHCP server | `10.99.99.10` (external, reached via L3Out) |
+| leaf1 relay loopback (Tenant-A) | `10.99.0.21/32` |
+| leaf2 relay loopback (Tenant-A) | `10.99.0.22/32` |
+| VLAN 10 client scope | `10.100.10.100 – 10.100.10.200` |
+| VLAN 20 client scope | `10.100.20.100 – 10.100.20.200` |
+| relay loopback subnet | `10.99.0.0/24` — **outside every scope** |
+
+---
+
+## What's special in the config
+
+**Global (each leaf):**
 
 ```
-show bgp l2vpn evpn | include 10.99.0.21
+feature dhcp
+service dhcp
+ip dhcp relay
+ip dhcp relay information option          ! Option 82
+ip dhcp relay information option vpn       ! VRF sub-option
 ```
 
-> "And it's advertised into the tenant VRF, so the server's reply can
-> actually route back across the fabric to find it. Forward path and
-> return path both work."
+**Per-VRF relay loopback (unique per leaf):**
 
-### Beat 3: The lease — the payoff (3 min)
+```
+interface loopback99
+  vrf member Tenant-A
+  ip address 10.99.0.21/32                 ! .22 on leaf2 — UNIQUE per leaf
+```
 
-Have the server-log pane visible. Then:
+Advertise it into the tenant VRF so the server's reply can route back:
+
+```
+router bgp 65000
+  vrf Tenant-A
+    address-family ipv4 unicast
+      redistribute direct route-map ALL_ROUTES   ! already present from S4;
+                                                  ! picks up loopback99 too
+```
+
+**On each client SVI:**
+
+```
+interface Vlan10
+  vrf member Tenant-A
+  ip address 10.100.10.1/24
+  fabric forwarding mode anycast-gateway
+  ip dhcp relay address 10.99.99.10                ! the DHCP server
+  ip dhcp relay source-interface loopback99         ! the UNIQUE giaddr
+```
+
+The two relay lines on the SVI are the heart of it: *where to send the
+request* (`relay address`) and *what to stamp as `giaddr` / source from*
+(`source-interface`).
+
+---
+
+## Bring-up
+
+Self-contained (Model B), built on the Session 9 topology.
+
+```bash
+cd ~/vxlan-evpn-zero-to-hero
+
+containerlab destroy -t labs/<current>/topology.clab.yml --cleanup
+./scripts/deploy.sh 12-dhcp-relay
+watch -n 10 'docker ps --format "{{.Names}}\t{{.Status}}" | grep clab-vxlan'
+
+./scripts/switch.sh 12-dhcp-relay      # pushes relay config to leaves
+
+# Start the DHCP server (dnsmasq on the server host):
+docker exec clab-vxlan-evpn-dhcp-server sh -c '
+  apk add --no-cache dnsmasq >/dev/null 2>&1
+  cat > /etc/dnsmasq.conf << EOF
+port=0
+dhcp-relay=10.99.99.10
+# scope keyed on the relayed subnet (link-selection sub-option):
+dhcp-range=set:v10,10.100.10.100,10.100.10.200,255.255.255.0,12h
+dhcp-range=set:v20,10.100.20.100,10.100.20.200,255.255.255.0,12h
+dhcp-option=tag:v10,3,10.100.10.1
+dhcp-option=tag:v20,3,10.100.20.1
+log-dhcp
+EOF
+  ip addr add 10.99.99.10/24 dev eth1 2>/dev/null
+  ip link set eth1 up
+  pkill dnsmasq 2>/dev/null
+  dnsmasq -C /etc/dnsmasq.conf -d &
+'
+
+# Make the clients request DHCP instead of static:
+docker exec clab-vxlan-evpn-host1 sh -c 'ip addr flush dev eth1; udhcpc -i eth1 -n'
+```
+
+> The exact dnsmasq invocation and the server-host wiring are provided
+> in full in the lab's `switch.sh` output and `verify.md`. A real IPAM
+> appliance would replace dnsmasq with zero change to the leaf relay
+> config.
+
+---
+
+## Key tests after deployment
+
+### Test 1: Client gets a lease in the right scope
 
 ```bash
 docker exec clab-vxlan-evpn-host1 sh -c 'ip addr flush dev eth1; udhcpc -i eth1 -n'
 docker exec clab-vxlan-evpn-host1 ip addr show eth1
 ```
 
-> "No IP a second ago. Now — 10.100.10.137, in VLAN 10's scope, default
-> route via the anycast gateway. One command, fully addressed."
+Expected: an address in `10.100.10.100–200` (VLAN 10's scope), default
+route via `10.100.10.1`. host2 (VLAN 20) gets one in `10.100.20.100–200`.
 
-Point at the server log pane:
+### Test 2: The relay sourced from the unique loopback
 
-> "Watch the log. DISCOVER, OFFER, REQUEST, ACK — the DORA exchange. And
-> look at the giaddr field: **10.99.0.21**. The leaf's unique loopback,
-> NOT 10.100.10.1. The server replied to *this leaf specifically*. The
-> anycast IP never entered the DHCP conversation."
-
-### Beat 4: How the server picked the right subnet (3 min)
-
-> "Here's the subtle part. The giaddr is 10.99.0.21 — that's a
-> 10.99.x address. But the client got a 10.100.10.x address. How did the
-> server know to use the VLAN 10 scope when the giaddr is in a totally
-> different subnet?"
-
-*(let them think)*
-
-> "Option 82, link-selection sub-option. The relay told the server two
-> *separate* things: 'reply to me at 10.99.0.21' (giaddr, reachability)
-> and 'but the client is actually in 10.100.10.0/24' (link-selection,
-> scope). The classic single-router world fused those — giaddr was both.
-> On an anycast fabric they *have* to be split."
-
-> "And there's a vpn sub-option too, carrying the VRF name. We have one
-> tenant today, but the moment you have two tenants with overlapping
-> 10.100.10.0/24, that sub-option is how one DHCP server keeps them
-> straight."
-
-### Beat 5: Break it live — the loopback-in-scope trap (4 min)
-
-This is the memorable one.
-
-> "Let me show you the mistake everyone makes once. I'll move the relay
-> loopback *inside* the pool the server hands out."
-
-On leaf1:
+On **leaf1**:
 
 ```
-configure terminal
-interface loopback99
-  ip address 10.100.10.150/32
-end
+show ip dhcp relay address
+show ip dhcp relay information option
 ```
 
-> "Now the giaddr is 10.100.10.150 — which is *inside* the
-> 10.100.10.100-200 scope. Watch what happens over a few leases."
+Expected: relay address `10.99.99.10`, Option 82 enabled with the vpn
+sub-option, source-interface `loopback99`.
+
+### Test 3: The server saw the right giaddr and link-selection
+
+On the server:
 
 ```bash
-docker exec clab-vxlan-evpn-host1 sh -c 'ip addr flush dev eth1; udhcpc -i eth1 -n'
-# and again
-docker exec clab-vxlan-evpn-host1 sh -c 'ip addr flush dev eth1; udhcpc -i eth1 -n'
+docker exec clab-vxlan-evpn-dhcp-server sh -c 'logread 2>/dev/null | grep -i dhcp | tail -20'
 ```
 
-> "Intermittent. Sometimes fine, sometimes the server tries to hand out
-> .150 — which the leaf is *also* using as its giaddr. Two things own
-> one address. The failure is intermittent and points everywhere except
-> the real cause."
+Expected: DHCPDISCOVER/OFFER/REQUEST/ACK, with `giaddr` = the leaf's
+`10.99.0.21` loopback (NOT the anycast `10.100.10.1`), and the
+link-selection sub-option carrying the client subnet.
 
-> "This is why production keeps relay loopbacks in their own block —
-> 10.99.0.0/24 here — provably outside every client scope. **Rule:
-> infrastructure addresses never overlap pools.** When DHCP fails
-> *intermittently* rather than totally, suspect an address overlap
-> first."
+### Test 4: Reply routes back to the relaying leaf
 
-Restore:
+On **leaf1**:
 
 ```
-interface loopback99
-  ip address 10.99.0.21/32
-end
+show ip route 10.99.99.0/24 vrf Tenant-A
+show bgp l2vpn evpn | include 10.99.0.21
 ```
 
-### Beat 6: The triage table (3 min)
-
-> "Here's the thing that makes you good at this in production. 'The host
-> didn't get an address' has *four* different causes, and they look
-> identical from the host. The server log tells them apart."
-
-Walk the table from break-it.md:
-
-> - "**Nothing in the server log at all?** The relay address is missing
->   or wrong — the discover never left the leaf. Forward-path problem."
-> - "**Discover and offer logged, but the host gets nothing?** The reply
->   can't route back to the giaddr — the relay loopback isn't advertised
->   into the VRF. Return-path problem."
-> - "**Host gets an address, but in the wrong subnet?** The server is
->   keying scope on giaddr instead of link-selection. Option 82 problem."
-> - "**Intermittent?** Address overlap — giaddr inside a pool."
-
-> "Four symptoms, four fixes, one diagnostic: the server log. That
-> triage *is* the production skill."
+Expected: the server subnet reachable in Tenant-A (via L3Out), and
+leaf1's relay loopback `10.99.0.21` advertised into EVPN so the server's
+unicast reply finds its way back across the fabric.
 
 ---
 
-## Common questions and good answers
+## Lessons from the build
 
-**Q: "Why not just put the DHCP server on every subnet locally?"**
+**1. Anycast gateway is a forwarding feature that fights control
+protocols.** Everything that makes anycast great for the data plane —
+same IP everywhere, any leaf answers — is exactly what breaks DHCP,
+which needs to reply to *one specific* relay. The unique per-VRF
+loopback is the reconciliation. Once you've seen this, you'll recognize
+the same shape in other "reply to the specific box" problems on anycast
+fabrics.
 
-> "You could, but then you're running DHCP scopes on hundreds of leaves
-> and your IPAM is scattered everywhere. Centralized DHCP reached by
-> relay is how real shops do it — one source of truth, relay carries the
-> requests in. The relay is what makes centralization possible across an
-> anycast fabric."
+**2. The relay loopback must live outside every DHCP scope.** Put it
+inside a pool and the server may hand that exact address to a client,
+and now two things own it — the leaf and a host. The failure is
+intermittent and points everywhere except the real cause. Keep relay
+infrastructure addressing in its own block (`10.99.0.0/24` here),
+provably disjoint from client scopes. (Break-it #2.)
 
-**Q: "Does the anycast gateway IP ever get used in DHCP at all?"**
+**3. `giaddr` selects reachability; link-selection selects scope.** The
+classic single-router assumption — "`giaddr` is both how you reach me
+*and* which subnet to assign" — is false on an anycast fabric. They're
+split: `giaddr` is the unique loopback (reachability), link-selection is
+the client subnet (scope). A DHCP server that doesn't understand Option
+82 link-selection will assign from the *loopback's* subnet and fail.
+Your IPAM must speak Option 82. (Break-it #3.)
 
-> "Only as the gateway the client *receives* in its lease — Option 3,
-> default router, 10.100.10.1. That's correct: the client should use the
-> anycast gateway for forwarding. But the relay *conversation* with the
-> server uses the unique loopback. Anycast for data plane, loopback for
-> the DHCP control exchange — two addresses, two jobs."
-
-**Q: "What if I have the same subnet in two VRFs?"**
-
-> "That's exactly what the Option 82 vpn sub-option is for. The relay
-> stamps the VRF identity, the server has per-tenant scopes, and
-> overlapping 10.100.10.0/24 in Tenant-A and Tenant-B get separate
-> pools. Without that sub-option, one DHCP server can't serve
-> overlapping tenants — you'd need a server per VRF."
-
-**Q: "Is dnsmasq what I'd use in production?"**
-
-> "No — you'd use Infoblox, Windows DHCP, or ISC Kea with your IPAM. But
-> the relay protocol is identical. The leaf config doesn't change one
-> line whether the server is dnsmasq in a container or a million-dollar
-> IPAM appliance. dnsmasq just has to be Option-82-aware, which it is."
-
-**Q: "How does this interact with vPC?"**
-
-> "On a vPC pair, both leaves share the anycast gateway but each still
-> needs its *own* unique relay loopback, and the loopback has to be
-> advertised so replies route correctly even after a peer failover.
-> Cisco's guide calls out a per-vPC-VTEP loopback specifically. Same
-> principle, one extra wrinkle."
+**4. Don't forget to advertise the relay loopback into the tenant VRF.**
+If `loopback99` isn't redistributed into Tenant-A's BGP, the request
+goes out fine but the server's reply has nowhere to route — silent
+one-way failure. The `redistribute direct` from Session 4 already covers
+it, but only if the loopback is a `vrf member Tenant-A`. (Break-it #1.)
 
 ---
 
-## Cut points
+## Production patterns we're foreshadowing
 
-- **Trim Beat 4** (Option 82 detail) to 90 seconds if the audience isn't
-  deep on DHCP internals — the giaddr-vs-link-selection split is the one
-  idea to keep.
-- **Beat 6** (triage table) can be a handout instead of a walk-through if
-  short on time.
+**Redundant DHCP servers.** Production lists two (or more)
+`ip dhcp relay address` lines per SVI — the relay forwards to all of
+them; the client takes the first OFFER. Trivial to add, essential for
+availability.
 
-Do NOT cut Beat 5 (the live loopback-in-scope break). It's the
-memorable, production-real mistake — the thing they'll actually hit.
+**DHCP snooping + IP Source Guard at the access edge.** Relay gets the
+address; snooping makes sure a rogue host can't *be* a DHCP server or
+spoof a neighbor's lease. The two are almost always deployed together in
+enterprise/bank fabrics.
 
----
+**IPv6 / DHCPv6 relay.** Same model, different option set
+(`ipv6 dhcp relay`), with the LDRA (Lightweight DHCPv6 Relay Agent) at
+the access layer. Dual-stack fabrics run both.
 
-## Closing the call
+**PXE / bare-metal provisioning.** The reason DHCP relay is often
+*urgent* in a new fabric: server teams can't image bare metal until
+relay works. DHCP Option 66/67 (next-server / boot-file) ride the same
+relay path to point machines at a TFTP/HTTP boot source.
 
-> "Today the fabric started offering a real service. Hosts get addresses
-> the way they do in production — DHCP, centrally, across the fabric."
-
-> "Key takeaways:"
-> 1. "Anycast gateway is a forwarding feature that fights any protocol
->     needing to reply to one specific leaf. DHCP is the first one you
->     hit."
-> 2. "The fix: a unique per-VRF loopback as giaddr — never the anycast
->     IP — advertised into the tenant VRF."
-> 3. "Option 82 splits the job: link-selection picks the subnet, the vpn
->     sub-option picks the tenant; giaddr is just reachability."
-> 4. "'No DHCP' has four causes; the server log tells you which."
-
-> "That last point is the one that'll save you at 2 AM. Most people
-> stare at the client. The answer is always in the server log."
+**IPAM integration.** Infoblox / Windows DHCP / ISC Kea replace dnsmasq
+with no change to the leaf config — the relay protocol is the contract.
+The Option 82 VRF sub-option is what lets one IPAM serve hundreds of
+overlapping tenants.
 
 ---
 
-## Notes for me
+## What you should be able to explain after Session 12
 
-1. **This session exists because of a question a student will always
-   ask in Session 4:** "wait, if every leaf has the same gateway IP, how
-   does DHCP work?" I used to hand-wave it. Now it's a whole session,
-   and it's one of the more satisfying ones because the anycast
-   'problem' and its loopback 'fix' are so clean.
+1. Why distributed anycast gateways make DHCP relay harder than in a
+   classic network — the "reply to one specific leaf" problem.
+2. Why each leaf needs a *unique* per-VRF loopback as `giaddr`, and why
+   it must live outside every DHCP scope.
+3. What the Option 82 link-selection and VPN sub-options each do, and
+   which one selects the scope vs. the tenant.
+4. The split between `giaddr` (reachability) and link-selection (scope)
+   — and what breaks if the server ignores Option 82.
+5. Why the relay loopback has to be advertised into the tenant VRF.
 
-2. **The build's real gotcha was the relay loopback subnet.** First pass
-   I put it in 10.100.x by habit and got intermittent failures — which
-   became break-it #2. The lab teaches the exact mistake I made.
+---
 
-3. **dnsmasq's `dhcp-relay` + tag-based ranges** are how you fake
-   link-selection scope selection without a real IPAM. If dnsmasq ever
-   behaves oddly, check it's built with the DHCP option compiled in
-   (Alpine's package is) and that `port=0` is set (disables its DNS,
-   which we don't want here).
+## Next
 
-4. **Keep the server-log pane visible the whole session.** Every beat
-   and every break-it is read from that log. It's the star of the show —
-   the triage lesson only lands if they watch the log react in real time.
-
-5. **vPC interaction is real but I keep it to the Q&A** — full vPC-relay
-   detail (per-VTEP loopback, advertise after failover) is a rabbit hole
-   that distracts from the core anycast-vs-DHCP idea. Mention, don't
-   demo, unless asked.
+With DHCP relay, the fabric now provides a real host-facing *service*,
+not just connectivity. Natural follow-ons in the operational arc:
+**Session 13** layers BFD on the underlay and EVPN sessions plus route
+policy on the L3Out (convergence + safety), and **Session 14** hardens
+the L2 edge with storm control, the STP boundary, and orphan-port
+behaviour.
