@@ -1,0 +1,27 @@
+# Session 15 - Firewall Insertion (VRF sandwich + PBR steering) - UNTESTED
+# Base 4-node fabric + fw (Alpine, dual-armed into two service VLANs on leaf1)
+name: vxlan-evpn
+topology:
+  kinds:
+    cisco_n9kv:
+      image: vrnetlab/cisco_n9kv:9300-10.5.5
+  nodes:
+    spine1: { kind: cisco_n9kv }
+    spine2: { kind: cisco_n9kv }
+    leaf1:  { kind: cisco_n9kv }
+    leaf2:  { kind: cisco_n9kv }
+    host1:  { kind: linux, image: alpine:latest }
+    host2:  { kind: linux, image: alpine:latest }
+    fw:     { kind: linux, image: alpine:latest }
+  links:
+    # fabric (same wiring as 01-underlay base)
+    - endpoints: ["spine1:eth1", "leaf1:eth1"]
+    - endpoints: ["spine1:eth2", "leaf2:eth1"]
+    - endpoints: ["spine2:eth1", "leaf1:eth2"]
+    - endpoints: ["spine2:eth2", "leaf2:eth2"]
+    # hosts
+    - endpoints: ["leaf1:eth3", "host1:eth1"]
+    - endpoints: ["leaf2:eth3", "host2:eth1"]
+    # firewall: two arms into leaf1 (VLAN 91 = Tenant-A side, VLAN 92 = Tenant-B side)
+    - endpoints: ["leaf1:eth5", "fw:eth1"]
+    - endpoints: ["leaf1:eth6", "fw:eth2"]
