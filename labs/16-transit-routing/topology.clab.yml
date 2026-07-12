@@ -1,0 +1,26 @@
+# Session 16 - Transit Routing (fabric between two external domains) - UNTESTED
+name: vxlan-evpn
+topology:
+  kinds:
+    cisco_n9kv: { image: vrnetlab/cisco_n9kv:9300-10.5.5 }
+    ceos: { image: ceos:4.30.1F }
+  nodes:
+    spine1: { kind: cisco_n9kv }
+    spine2: { kind: cisco_n9kv }
+    leaf1:  { kind: cisco_n9kv }
+    leaf2:  { kind: cisco_n9kv }
+    extwan:  { kind: ceos, startup-config: configs/extwan.cfg }
+    extinet: { kind: ceos, startup-config: configs/extinet.cfg }
+    host_wan:  { kind: linux, image: alpine:latest }
+    host_inet: { kind: linux, image: alpine:latest }
+    host1:     { kind: linux, image: alpine:latest }
+  links:
+    - endpoints: ["spine1:eth1", "leaf1:eth1"]
+    - endpoints: ["spine1:eth2", "leaf2:eth1"]
+    - endpoints: ["spine2:eth1", "leaf1:eth2"]
+    - endpoints: ["spine2:eth2", "leaf2:eth2"]
+    - endpoints: ["leaf1:eth3", "host1:eth1"]
+    - endpoints: ["leaf1:eth7", "extwan:eth1"]      # L3Out WEST (AS 65200)
+    - endpoints: ["leaf2:eth7", "extinet:eth1"]     # L3Out EAST (AS 65100)
+    - endpoints: ["extwan:eth3",  "host_wan:eth1"]
+    - endpoints: ["extinet:eth3", "host_inet:eth1"]
