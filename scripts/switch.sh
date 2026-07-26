@@ -264,15 +264,45 @@ BONDSETUP
     ;;
   06c-vpc-vxlan)
     echo ""
-    echo "No host setup needed for 6c (host1 bond already in place from 6b)."
+    echo "6c assumes host1's bond from 6b is still up - VERIFY, don't assume:"
+    echo "  ssh admin@clab-vxlan-evpn-leaf1 'show vpc | include Po10'"
+    echo "  # want: Po10 ... up   (if 'down*', rebuild the bond below, then wait 30s)"
+    echo ""
+    echo "  If Po10 is down (or host1 can't ping its gateway), rebuild host1's bond:"
+    cat << 'BOND6C'
+ 
+  docker exec clab-vxlan-evpn-host1 sh -c '
+    ip link set bond0 down 2>/dev/null
+    ip link delete bond0 2>/dev/null
+    ip link add bond0 type bond
+    echo 802.3ad > /sys/class/net/bond0/bonding/mode
+    echo fast > /sys/class/net/bond0/bonding/lacp_rate
+    echo 100 > /sys/class/net/bond0/bonding/miimon
+    ip link set eth1 down
+    ip link set eth2 down
+    ip addr flush dev eth1
+    ip addr flush dev eth2
+    ip link set eth1 master bond0
+    ip link set eth2 master bond0
+    ip link set eth1 up
+    ip link set eth2 up
+    ip link set bond0 up
+    ip addr add 10.100.10.10/24 dev bond0
+    ip route replace default via 10.100.10.1
+  '
+ 
+BOND6C
+    echo "  Then wait ~30s for LACP and re-check: show vpc | include Po10  (want up)."
     echo ""
     echo "Verify the keystone fix:"
     echo "  ssh admin@clab-vxlan-evpn-leaf1"
-    echo "  show vpc        # expect Configuration consistency status: success"
-    echo "  show nve interface nve1 detail   # expect VPC-VIP-Only [notified]"
+    echo "  show vpc                          # expect Configuration consistency status: success"
+    echo "  show nve interface nve1 detail    # expect VPC-VIP-Only [notified], secondary 10.0.1.100"
     echo ""
-    echo "Then test connectivity:"
-    echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.200.10.10"
+    echo "Then test connectivity - NOTE host2 is Tenant-B (10.200.10.10) since 5a, so this is"
+    echo "a CROSS-TENANT test via the 5b leak (NOT 10.100.20.10 - nothing lives there in this chain):"
+    echo "  docker exec clab-vxlan-evpn-host2 ip addr show eth1     # confirm 10.200.10.10 first"
+    echo "  docker exec clab-vxlan-evpn-host1 ping -c 3 10.200.10.10   # expect TTL 63"
     ;;
   08-l2out)
     echo ""
